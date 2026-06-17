@@ -1,31 +1,57 @@
-// --- Core-Architect-Agent ---
-// Главный контроллер приложения
+// ═══════════════════════════════════════════════════════════════════════
+//  ANTIGRAVITY СГОУ — ОРКЕСТРАТОР (ES6 Entry Point)
+//  Связывает model, renderer, ui, economics.
+//  Физика: 10 тиков/сек. Рендер: 60 FPS. Тренды: 1/сек.
+// ═══════════════════════════════════════════════════════════════════════
 
+import { state, config, tick, forcePulseAll, addTornBag, setIdealMode, autoTune } from './model.js';
+import { initRenderer, render, burstDust } from './renderer.js';
+import { initUI, updateTelemetry, initCharts, updateCharts, processAlarms, syncSlidersToState } from './ui.js';
+import { calcEconomics } from './economics.js';
+
+// ── Инициализация ──
 document.addEventListener('DOMContentLoaded', () => {
-    if (!window.SGOModel || !window.SGOUi || !window.SGOFailures) {
-        console.error("Не удалось загрузить все модули (Model, UI, Failures).");
-        return;
-    }
+    // Canvas
+    const cv = document.getElementById('cv');
+    initRenderer(cv);
 
-    const model = window.SGOModel;
-    const ui = window.SGOUi;
-    const failures = window.SGOFailures;
+    // UI контролы
+    initUI(state, {
+        onForcePulse: () => forcePulseAll(),
+        onBagRupture: () => { addTornBag(); burstDust(); },
+        onIdealToggle: (on) => setIdealMode(on),
+        // При изменении любого параметра в идеальном режиме → пересчёт
+        onParamChange: (paramName) => {
+            if (state.idealMode) {
+                autoTune(paramName);
+                syncSlidersToState(state);
+            }
+        },
+    });
 
-    ui.init(model.state);
-    failures.init(model.state);
+    // Chart.js тренды
+    initCharts();
 
-    // Логическая симуляция ускорена: каждые 100 мс = 1 игровой шаг (в 10 раз быстрее)
+    // ── Физическая симуляция (10 Гц) ──
     setInterval(() => {
-        model.tick();
-    }, 100); // 100ms вместо 1000ms
+        tick();
+        // Алармы
+        processAlarms(state.alarms);
+    }, 100);
 
-    // Рендеринг интерфейса и частиц (60 FPS)
+    // ── Обновление телеметрии и трендов (1 Гц) ──
+    setInterval(() => {
+        const econ = calcEconomics(state.out);
+        updateTelemetry(state, econ);
+        updateCharts(state);
+    }, 1000);
+
+    // ── Рендер Canvas (60 FPS) ──
     function renderLoop() {
-        ui.update(model.state);
-        ui.renderCanvas(); // Отрисовка частиц на Canvas
+        render(state, config);
         requestAnimationFrame(renderLoop);
     }
-
-    // Запуск цикла рендера
     requestAnimationFrame(renderLoop);
+
+    console.log('🏭 ANTIGRAVITY СГОУ Digital Twin v4.0 — запущен');
 });

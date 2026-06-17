@@ -3,105 +3,193 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Цифровой двойник СГОУ — Antigravity v3.1</title>
+    <title>Цифровой двойник СГОУ — Antigravity v4.0</title>
+    <meta name="description" content="Интерактивная 2D-симуляция сухой газоочистной установки алюминиевого завода">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <style>
+        /* ════════════════════════════════════════════════════════════════
+         *  SCADA DARK THEME v4.0
+         * ════════════════════════════════════════════════════════════════ */
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             background: #080b10; color: #c9d1d9;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             display: flex; height: 100vh; overflow: hidden;
         }
-        .canvas-wrap { width: 70%; height: 100%; background: #05070a; border-right: 2px solid #1b2028; }
-        canvas { display: block; width: 100%; height: 100%; }
+
+        /* ── Canvas (левая часть) ── */
+        .canvas-wrap {
+            flex: 7; display: flex; align-items: center; justify-content: center;
+            background: #05070a; border-right: 2px solid #1b2028;
+            padding: 8px; overflow: hidden;
+        }
+        canvas {
+            width: 100%; height: auto;
+            aspect-ratio: 16 / 9;
+            max-height: 100%;
+            border-radius: 4px;
+        }
+
+        /* ── Панель (правая часть) ── */
         .panel {
-            width: 30%; height: 100%;
+            flex: 3; min-width: 320px; max-width: 400px;
+            height: 100%; display: flex; flex-direction: column;
             background: linear-gradient(180deg, #0f1318, #161b22);
-            display: flex; flex-direction: column;
-            overflow-y: auto; padding: 14px; gap: 10px;
+            overflow-y: auto; padding: 10px; gap: 8px;
         }
         .panel::-webkit-scrollbar { width: 5px; }
         .panel::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
         .panel-header {
-            text-align: center; font-size: 14px; font-weight: 700;
+            text-align: center; font-size: 13px; font-weight: 700;
             letter-spacing: 2px; color: #58a6ff; text-transform: uppercase;
-            padding-bottom: 5px; border-bottom: 1px solid #21262d;
+            padding-bottom: 4px; border-bottom: 1px solid #21262d;
             text-shadow: 0 0 10px rgba(88,166,255,0.3);
         }
-        .box { background: #0d1117; border: 1px solid #21262d; border-radius: 7px; padding: 9px 11px; }
+
+        /* ── Блоки ── */
+        .box { background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 8px 10px; }
         .box-title {
-            font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px;
-            color: #6e7681; font-weight: 700; margin-bottom: 7px;
-            padding-bottom: 3px; border-bottom: 1px solid #21262d;
+            font-size: 8px; text-transform: uppercase; letter-spacing: 1.5px;
+            color: #6e7681; font-weight: 700; margin-bottom: 6px;
+            padding-bottom: 2px; border-bottom: 1px solid #21262d;
         }
-        .trow { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-family: 'Consolas', monospace; font-size: 11px; }
+        .trow {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 3px; font-family: 'Consolas', monospace; font-size: 11px;
+        }
         .tlbl { color: #8b949e; }
-        .tval { font-weight: 700; font-size: 13px; color: #58a6ff; text-shadow: 0 0 4px rgba(88,166,255,0.2); }
+        .tval { font-weight: 700; font-size: 12px; color: #58a6ff; }
         .tval.ok { color: #3fb950; } .tval.warn { color: #f85149; animation: blink 1.2s infinite; } .tval.caution { color: #d29922; }
-        .sep { border-top: 1px solid #21262d; margin: 4px 0; }
-        .sw { margin-bottom: 8px; }
-        .sw-head { display: flex; justify-content: space-between; font-size: 10px; color: #c9d1d9; margin-bottom: 2px; }
+        .sep { border-top: 1px solid #21262d; margin: 3px 0; }
+
+        /* ── Слайдеры ── */
+        .sw { margin-bottom: 7px; }
+        .sw-head { display: flex; justify-content: space-between; font-size: 10px; color: #c9d1d9; margin-bottom: 1px; }
         .sw-val { font-weight: 700; color: #58a6ff; }
         input[type=range] {
             width: 100%; height: 4px; border-radius: 2px;
             background: #21262d; outline: none; appearance: none; cursor: pointer;
         }
         input[type=range]::-webkit-slider-thumb {
-            appearance: none; width: 12px; height: 12px; border-radius: 50%;
-            background: #58a6ff; box-shadow: 0 0 5px rgba(88,166,255,0.4);
+            appearance: none; width: 11px; height: 11px; border-radius: 50%;
+            background: #58a6ff; box-shadow: 0 0 4px rgba(88,166,255,0.4);
         }
+
+        /* ── Кнопки ── */
+        .btn-row { display: flex; gap: 5px; margin-top: 5px; }
         .btn {
-            width: 100%; padding: 9px; border-radius: 5px;
-            font-weight: 700; font-size: 11px; cursor: pointer;
-            text-transform: uppercase; letter-spacing: 1px;
+            flex: 1; padding: 7px; border-radius: 5px; font-weight: 700; font-size: 10px;
+            cursor: pointer; text-transform: uppercase; letter-spacing: 1px;
             transition: all 0.1s; border: 1px solid;
         }
         .btn-green { background: linear-gradient(180deg, #238636, #1a6227); color: #fff; border-color: #2ea043; }
-        .btn-green:active { transform: translateY(1px); }
-        .btn-red { background: linear-gradient(180deg, #da3633, #b62324); color: #fff; border-color: #f85149; }
-        .btn-red:active { transform: translateY(1px); }
+        .btn-red   { background: linear-gradient(180deg, #da3633, #b62324); color: #fff; border-color: #f85149; }
+        .btn:active { transform: translateY(1px); }
+
         .num-input {
-            width: 50px; padding: 2px 4px; border-radius: 3px;
+            width: 48px; padding: 2px 4px; border-radius: 3px;
             background: #161b22; border: 1px solid #30363d;
             color: #f85149; font-family: 'Consolas', monospace; font-size: 11px;
             text-align: center; outline: none;
         }
-        .sec-row { display: flex; gap: 3px; margin-top: 5px; }
-        .sec-ind { flex: 1; height: 24px; border-radius: 3px; position: relative; border: 1px solid #30363d; overflow: hidden; background: #0d1117; }
+
+        /* ── Секции фильтра ── */
+        .sec-row { display: flex; gap: 3px; margin-top: 4px; }
+        .sec-ind { flex: 1; height: 22px; border-radius: 3px; position: relative; border: 1px solid #30363d; overflow: hidden; background: #0d1117; }
         .sec-fill { position: absolute; bottom: 0; left: 0; width: 100%; transition: height 0.3s, background 0.3s; }
         .sec-lbl { position: absolute; width: 100%; text-align: center; font-size: 7px; color: #8b949e; top: 1px; z-index: 1; font-family: monospace; }
+
+        /* ── Трубы (шиберы) ── */
+        .pipe-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 4px; }
+        .pipe-item { font-size: 9px; }
+        .pipe-item input { width: 100%; }
+
+        /* ── Графики (тренды) ── */
+        .chart-wrap { height: 80px; position: relative; }
+        .chart-wrap canvas { width: 100% !important; height: 100% !important; }
+
+        /* ── Журнал алармов ── */
+        .alarm-box {
+            max-height: 100px; overflow-y: auto;
+            font-family: 'Consolas', monospace; font-size: 9px;
+            background: #0a0c10; border: 1px solid #21262d; border-radius: 4px;
+            padding: 4px 6px;
+        }
+        .alarm-box::-webkit-scrollbar { width: 3px; }
+        .alarm-box::-webkit-scrollbar-thumb { background: #30363d; }
+        .alarm-entry { color: #8b949e; margin-bottom: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .alarm-entry.alarm-warn { color: #f85149; }
+
+        /* ── Экономика ── */
+        .econ-row { display: flex; justify-content: space-between; font-family: monospace; font-size: 10px; margin-bottom: 2px; }
+        .econ-lbl { color: #6e7681; }
+        .econ-val { font-weight: 700; color: #3fb950; }
+
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.5} }
-        .footer { font-size: 8px; color: #30363d; text-align: center; margin-top: auto; padding-top: 4px; }
-        .btn-row { display: flex; gap: 6px; margin-top: 6px; }
-        .btn-row .btn { flex: 1; }
+        .footer { font-size: 7px; color: #30363d; text-align: center; padding-top: 4px; flex-shrink: 0; }
+
+        /* ── Кнопка «Идеальная ГОУ» ── */
+        .btn-ideal {
+            width: 100%; padding: 10px; font-size: 12px;
+            background: linear-gradient(180deg, #1a1a2e, #16213e); color: #8b949e;
+            border: 1px solid #30363d; cursor: pointer; text-transform: uppercase;
+            letter-spacing: 2px; transition: all 0.3s;
+        }
+        .btn-ideal:hover { border-color: #fbbf24; color: #fbbf24; }
+        .btn-ideal.active {
+            background: linear-gradient(180deg, #3a2a00, #1a1200);
+            border-color: #fbbf24; color: #fbbf24;
+            box-shadow: 0 0 15px rgba(251, 191, 36, 0.25), inset 0 0 20px rgba(251, 191, 36, 0.05);
+            animation: idealPulse 2s infinite;
+        }
+        @keyframes idealPulse {
+            0%, 100% { box-shadow: 0 0 10px rgba(251,191,36,0.2); }
+            50% { box-shadow: 0 0 20px rgba(251,191,36,0.4); }
+        }
     </style>
 </head>
 <body>
+
+<!-- ═══════ CANVAS ═══════ -->
 <div class="canvas-wrap"><canvas id="cv"></canvas></div>
+
+<!-- ═══════ ПАНЕЛЬ УПРАВЛЕНИЯ ═══════ -->
 <div class="panel">
     <div class="panel-header">АСУ ТП · СГОУ</div>
 
-    <!-- ТЕЛЕМЕТРИЯ -->
+    <!-- ─── ИДЕАЛЬНАЯ ГОУ ─── -->
+    <button class="btn btn-ideal" id="btn-ideal">✨ Идеальная ГОУ</button>
+
+    <!-- ─── ТЕЛЕМЕТРИЯ ─── -->
     <div class="box">
         <div class="box-title">Телеметрия</div>
         <div class="trow"><span class="tlbl">Расход газа</span><span id="T-flow" class="tval">—</span></div>
-        <div class="trow"><span class="tlbl">Скорость в газоходе</span><span id="T-vel" class="tval">—</span></div>
-        <div class="trow"><span class="tlbl">ΔP фильтра</span><span id="T-dp" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">Скорость газохода</span><span id="T-vel" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">Т° газа (факт.)</span><span id="T-temp" class="tval">—</span></div>
+        <div class="sep"></div>
+        <div class="trow"><span class="tlbl">ΔP фильтра</span><span id="T-dpFilt" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">ΔP газоходов</span><span id="T-dpDuct" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">ΔP общее</span><span id="T-dpTotal" class="tval">—</span></div>
+        <div class="sep"></div>
         <div class="trow"><span class="tlbl">Ток дымососа</span><span id="T-amps" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">Мощность</span><span id="T-power" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">Ресивер воздуха</span><span id="T-airP" class="tval ok">—</span></div>
         <div class="sep"></div>
         <div class="trow"><span class="tlbl">HF вход</span><span id="T-hfIn" class="tval">—</span></div>
         <div class="trow"><span class="tlbl">HF выход</span><span id="T-hfOut" class="tval">—</span></div>
         <div class="trow"><span class="tlbl">Пыль выход</span><span id="T-dustOut" class="tval">—</span></div>
         <div class="sep"></div>
         <div class="trow"><span class="tlbl">η₁ реактор</span><span id="T-eff1" class="tval ok">—</span></div>
-        <div class="trow"><span class="tlbl">η₂ пирог (filsorption)</span><span id="T-eff2" class="tval ok">—</span></div>
-        <div class="trow"><span class="tlbl">η общая HF</span><span id="T-effHF" class="tval ok">—</span></div>
-        <div class="trow"><span class="tlbl">η пылеулавливание</span><span id="T-effDust" class="tval ok">—</span></div>
-        <div class="sep"></div>
+        <div class="trow"><span class="tlbl">η₂ пирог</span><span id="T-eff2" class="tval ok">—</span></div>
+        <div class="trow"><span class="tlbl">η HF общая</span><span id="T-effHF" class="tval ok">—</span></div>
+        <div class="trow"><span class="tlbl">η пыль</span><span id="T-effDust" class="tval ok">—</span></div>
         <div class="trow"><span class="tlbl">F в глинозёме</span><span id="T-fContent" class="tval">—</span></div>
+        <div class="sep"></div>
         <div class="trow"><span class="tlbl">Статус</span><span id="T-status" class="tval ok">НОРМА</span></div>
     </div>
 
-    <!-- СЕКЦИИ ФИЛЬТРА -->
+    <!-- ─── СЕКЦИИ ФИЛЬТРА ─── -->
     <div class="box">
         <div class="box-title">Секции фильтра (ΔP)</div>
         <div class="sec-row">
@@ -112,504 +200,80 @@
         </div>
     </div>
 
-    <!-- ДЫМОСОС -->
+    <!-- ─── ДЫМОСОС ─── -->
     <div class="box">
         <div class="box-title">Дымосос</div>
         <div class="sw"><div class="sw-head"><span>Обороты (RPM)</span><span class="sw-val" id="L-rpm">100 %</span></div><input type="range" id="I-rpm" min="0" max="100" value="100"></div>
         <div class="sw"><div class="sw-head"><span>Направляющий аппарат (НА)</span><span class="sw-val" id="L-vane">80 %</span></div><input type="range" id="I-vane" min="5" max="100" value="80"></div>
     </div>
 
-    <!-- ГАЗОВЫЙ ТРАКТ -->
+    <!-- ─── ГАЗОВЫЙ ТРАКТ ─── -->
     <div class="box">
         <div class="box-title">Газовый тракт</div>
-        <div class="sw"><div class="sw-head"><span>Температура газа</span><span class="sw-val" id="L-temp">110 °C</span></div><input type="range" id="I-temp" min="80" max="200" value="110"></div>
-        <div class="sw"><div class="sw-head"><span>Влажность газа</span><span class="sw-val" id="L-hum">5 %</span></div><input type="range" id="I-hum" min="0" max="20" value="5"></div>
+        <div class="sw"><div class="sw-head"><span>Температура газа (SP)</span><span class="sw-val" id="L-temp">110 °C</span></div><input type="range" id="I-temp" min="80" max="200" value="110"></div>
+        <div class="sw"><div class="sw-head"><span>Влажность</span><span class="sw-val" id="L-hum">5 %</span></div><input type="range" id="I-hum" min="0" max="20" value="5"></div>
         <div class="sw"><div class="sw-head"><span>Разрежение газохода</span><span class="sw-val" id="L-draft">-150 Па</span></div><input type="range" id="I-draft" min="-400" max="0" value="-150"></div>
     </div>
 
-    <!-- ГЛИНОЗЁМ -->
+    <!-- ─── ШИБЕРЫ ТРУБ ─── -->
+    <div class="box">
+        <div class="box-title">Шиберы газоходов (4 трубы)</div>
+        <div class="pipe-grid">
+            <div class="pipe-item"><span>1A: <b id="L-pipe-1A">100%</b></span><input type="range" id="I-pipe-1A" min="0" max="100" value="100"></div>
+            <div class="pipe-item"><span>1B: <b id="L-pipe-1B">100%</b></span><input type="range" id="I-pipe-1B" min="0" max="100" value="100"></div>
+            <div class="pipe-item"><span>2A: <b id="L-pipe-2A">100%</b></span><input type="range" id="I-pipe-2A" min="0" max="100" value="100"></div>
+            <div class="pipe-item"><span>2B: <b id="L-pipe-2B">100%</b></span><input type="range" id="I-pipe-2B" min="0" max="100" value="100"></div>
+        </div>
+    </div>
+
+    <!-- ─── ГЛИНОЗЁМ ─── -->
     <div class="box">
         <div class="box-title">Подача глинозёма</div>
         <div class="sw"><div class="sw-head"><span>Свежий Al₂O₃</span><span class="sw-val" id="L-fresh">5.0 т/ч</span></div><input type="range" id="I-fresh" min="0" max="10" step="0.1" value="5.0"></div>
         <div class="sw"><div class="sw-head"><span>Рецирк. Al₂O₃·AlF₃</span><span class="sw-val" id="L-recirc">20 т/ч</span></div><input type="range" id="I-recirc" min="0" max="40" step="0.5" value="20"></div>
     </div>
 
-    <!-- ФИЛЬТР / АВАРИИ -->
+    <!-- ─── ФИЛЬТР / АВАРИИ ─── -->
     <div class="box">
         <div class="box-title">Фильтр / Регенерация / Аварии</div>
         <div class="sw"><div class="sw-head"><span>Уставка авто-продувки ΔP</span><span class="sw-val" id="L-regenSP">1.2 кПа</span></div><input type="range" id="I-regenSP" min="0.8" max="2.0" step="0.05" value="1.2"></div>
-        <div class="trow" style="margin-top:4px;"><span class="tlbl">Порвано рукавов (шт)</span><input type="number" class="num-input" id="I-torn" min="0" max="100" value="0"></div>
+        <div class="trow" style="margin-top:3px;"><span class="tlbl">Порвано рукавов</span><input type="number" class="num-input" id="I-torn" min="0" max="100" value="0"></div>
         <div class="btn-row">
             <button class="btn btn-green" id="btn-pulse">⚡ Продувка</button>
             <button class="btn btn-red" id="btn-rupture">💥 Прорыв рукава</button>
         </div>
     </div>
 
-    <div class="footer">Antigravity Digital Twin v3.1 · Калибровано по НДТ · см. README.md</div>
+    <!-- ─── ТРЕНДЫ (Chart.js) ─── -->
+    <div class="box">
+        <div class="box-title">Тренды</div>
+        <div class="chart-wrap"><canvas id="chart-dp"></canvas></div>
+        <div class="chart-wrap"><canvas id="chart-hf"></canvas></div>
+        <div class="chart-wrap"><canvas id="chart-amps"></canvas></div>
+    </div>
+
+    <!-- ─── ЭКОНОМИКА ─── -->
+    <div class="box">
+        <div class="box-title">💰 Экономика смены</div>
+        <div class="econ-row"><span class="econ-lbl">Мощность дымососа</span><span class="econ-val" id="E-power">—</span></div>
+        <div class="econ-row"><span class="econ-lbl">Энергозатраты</span><span class="econ-val" id="E-costH">—</span></div>
+        <div class="econ-row"><span class="econ-lbl">За смену (8ч)</span><span class="econ-val" id="E-costS">—</span></div>
+        <div class="sep"></div>
+        <div class="econ-row"><span class="econ-lbl">Потери фтора</span><span class="econ-val" id="E-fluorH">—</span></div>
+        <div class="econ-row"><span class="econ-lbl">Экол. штрафы</span><span class="econ-val" id="E-penaltyH">—</span></div>
+    </div>
+
+    <!-- ─── ЖУРНАЛ АЛАРМОВ ─── -->
+    <div class="box">
+        <div class="box-title">📋 Журнал алармов</div>
+        <div class="alarm-box" id="alarm-log"><div class="alarm-entry" style="color:#3fb950;">[System] Симулятор запущен</div></div>
+    </div>
+
+    <div class="footer">Antigravity Digital Twin v4.0 · ES6 модули · НДТ · см. README.md</div>
 </div>
 
-<script>
-/* ========================================================================
- *  ANTIGRAVITY СГОУ DIGITAL TWIN v3.1
- *  Изменения vs v3.0:
- *    + Направляющий аппарат (НА) дымососа с реалистичной физикой
- *    + Визуализация возврата фторированного глинозёма (аэрожелоб)
- *    + Кнопка «Прорыв рукава» для имитации аварии
- *    + Квадратичная модель рабочей точки вентилятора с НА
- * ======================================================================== */
+<!-- ═══════ ES6 МОДУЛИ ═══════ -->
+<script type="module" src="src/app.js"></script>
 
-const S = {
-    in: {
-        fanRPM:      100,    // Обороты дымососа (0–100%) — обычно 100% (пост. скорость)
-        guideVane:   80,     // Направляющий аппарат (5–100%) — ОСНОВНОЙ регулятор потока
-        gasTemp:     110,    // °C
-        gasHumidity: 5,      // %
-        inletDraft: -150,    // Па
-        freshFeed:   5.0,    // т/ч
-        recircFeed:  20,     // т/ч
-        regenSP:     1.2,    // кПа
-        tornBags:    0
-    },
-    cfg: {
-        totalBags:800, bagsPerSection:200, numSections:4, ductArea:8.0,
-        nominalFlow:350000, maxFanPressure:4.5, fanMaxAmps:350, baseDP:0.45,
-        potroomCurrent:300, hfGenFactor:0.03, dustGenFactor:0.08,
-        maxReactorEff:0.70, maxCakeEff:0.995, reactorK:0.12, cakeK:3.5,
-        recircEfficiency:0.40, maxFContent:2.5
-    },
-    sections: [
-        {dp:0.55,cakeMass:5,isRegen:false,regenTimer:0},
-        {dp:0.60,cakeMass:6,isRegen:false,regenTimer:0},
-        {dp:0.50,cakeMass:4,isRegen:false,regenTimer:0},
-        {dp:0.58,cakeMass:5.5,isRegen:false,regenTimer:0}
-    ],
-    phys: { fanAngle:0, regenCooldown:0, fContentAccum:0.3, tickCount:0 },
-    out: {
-        gasFlow:0, normalFlow:0, gasVelocity:0, fanAmps:0, avgDP:0,
-        hfIn:0, hfOut:0, dustOut:0, effReactor:0, effCake:0, effHF:0,
-        effDust:0, fContent:0, status:'НОРМА'
-    }
-};
-
-const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
-let W,H;
-function resize(){cv.width=cv.parentElement.clientWidth;cv.height=cv.parentElement.clientHeight;W=cv.width;H=cv.height;}
-window.addEventListener('resize',resize); resize();
-
-// ── ЧАСТИЦЫ ──
-const particles=[];
-
-class Particle {
-    constructor(type,x,y,vx,vy){
-        this.type=type;this.x=x;this.y=y;this.vx=vx;this.vy=vy;
-        this.alive=true;this.life=1.0;
-        // Для рециркуляции: фаза маршрута
-        this.phase = 'normal'; // 'normal','hopper','chute_down','chute_right','chute_up','silo'
-    }
-    update(sm){
-        let s=Math.max(0.05,sm);
-
-        // --- Рециркуляционный маршрут (фторированный глинозём из бункера) ---
-        if(this.type==='recirc_return'){
-            switch(this.phase){
-                case 'hopper': // Падает в бункер
-                    this.y+=1.5;
-                    if(this.y>H*0.88){this.phase='chute_down';this.y=H*0.88;}
-                    break;
-                case 'chute_down': // Аэрожелоб вниз
-                    this.y+=1.0;
-                    if(this.y>H*0.93){this.phase='chute_right';this.y=H*0.93;}
-                    break;
-                case 'chute_right': // Аэрожелоб влево
-                    this.x-=2.5;
-                    if(this.x<W*0.36){this.phase='chute_up';this.x=W*0.36;}
-                    break;
-                case 'chute_up': // Вверх в силос рецирк.
-                    this.y-=2.5;
-                    if(this.y<H*0.16){this.alive=false;} // Дошёл до силоса
-                    break;
-            }
-            return;
-        }
-
-        if(this.type==='fresh'||this.type==='fluor'){
-            this.x+=this.vx; this.y+=this.vy;
-        } else if(this.type==='fugitive'){
-            this.x+=this.vx;this.y+=this.vy;
-            this.life-=0.012;if(this.life<=0)this.alive=false;return;
-        } else {
-            this.x+=this.vx*s; this.y+=this.vy*s;
-        }
-
-        // Реактор
-        if(this.x>W*0.22&&this.x<W*0.40){
-            if(this.type==='dirty'){this.vy+=(Math.random()-0.5)*0.6;if(this.y<H*0.22)this.vy=Math.abs(this.vy);if(this.y>H*0.72)this.vy=-Math.abs(this.vy);}
-            if((this.type==='fresh'||this.type==='fluor')&&this.y>H*0.40){this.vx=1.5*s;this.vy=(Math.random()-0.5)*0.4;}
-        }
-        // Газоход→фильтр
-        if(this.x>W*0.40&&this.x<W*0.50){if(this.type==='fresh'||this.type==='fluor')this.vx=2.5*s;}
-        // Фильтр
-        if(this.x>W*0.50&&this.x<W*0.68){
-            if(this.type==='dirty'){
-                if(Math.random()*100<S.out.effHF){this.type='clean';this.vx=2.5;this.vy=(Math.random()-0.5)*0.4;}
-                else this.vx=2.5;
-            }
-            if(this.type==='fresh'||this.type==='fluor'){this.vx=0;this.vy=1.2;if(this.y>H*0.73)this.alive=false;}
-        }
-        // К дымососу
-        if(this.x>W*0.68&&this.x<W*0.85){let ty=H*0.48;this.vy+=(ty-this.y)*0.04*s;}
-        // Труба
-        if(this.x>W*0.86){this.vx*=0.93;this.vy=-3*s;}
-
-        if(this.x>W+10||this.x<-10||this.y<-10||this.y>H+10)this.alive=false;
-    }
-    draw(c){
-        c.beginPath();let r=2.5;
-        switch(this.type){
-            case 'dirty':c.fillStyle='#ef4444';r=3;break;
-            case 'clean':c.fillStyle='#34d399';r=2.5;break;
-            case 'fresh':c.fillStyle='#e2e8f0';r=2;break;
-            case 'fluor':c.fillStyle='#fbbf24';r=2;break;
-            case 'dust':c.fillStyle='#fb923c';r=2;break;
-            case 'fugitive':c.fillStyle=`rgba(239,68,68,${this.life})`;r=3;break;
-            case 'recirc_return':c.fillStyle='#fbbf24';r=2;break;
-        }
-        c.arc(this.x,this.y,r,0,Math.PI*2);c.fill();
-    }
-}
-
-// ── ФИЗИЧЕСКИЙ ДВИЖОК v3.1 ──
-function physics(){
-    const I=S.in, C=S.cfg, P=S.phys, O=S.out;
-    P.tickCount++;
-
-    // 1. Среднее ΔP фильтра
-    O.avgDP = S.sections.reduce((a,s)=>a+s.dp,0)/C.numSections;
-
-    // 2. ДЫМОСОС + НАПРАВЛЯЮЩИЙ АППАРАТ
-    // ── В реальности дымосос работает на постоянных оборотах (синхронный двигатель).
-    // ── Регулирование потока выполняется НАПРАВЛЯЮЩИМ АППАРАТОМ (НА).
-    // ── НА изменяет завихрение потока на входе в рабочее колесо:
-    //    Q_eff = Q_max × n × α           (линейная зависимость)
-    //    ΔP_fan = ΔP_max × n² × α^1.5    (полуторная степень)
-    //    N_fan = N_max × n³ × α^2.5       (энергосбережение — главное преимущество НА)
-    //    где n = RPM/100, α = guideVane/100
-    let n = I.fanRPM / 100;
-    let alpha = I.guideVane / 100;
-
-    let fanQmax = C.nominalFlow * n * alpha;              // м³/ч (макс. расход при данных оборотах и НА)
-    let fanPmax = C.maxFanPressure * n*n * Math.pow(alpha, 1.5); // кПа (макс. напор)
-
-    // Температурный фактор (Гей-Люссак)
-    let tempK = I.gasTemp + 273;
-    let tempFactor = tempK / 273;
-
-    // Рабочая точка: квадратичная характеристика сети
-    let pRatio = fanPmax > 0 ? O.avgDP / fanPmax : 1;
-    let flowFrac = pRatio < 1 ? Math.sqrt(1 - pRatio) : 0;
-
-    O.gasFlow = fanQmax * flowFrac * tempFactor;
-    if(n<=0) O.gasFlow = 0;
-    O.normalFlow = O.gasFlow / tempFactor;
-    O.gasVelocity = (O.gasFlow/3600) / C.ductArea;
-
-    // 3. ТОК ДЫМОСОСА: N ∝ n³ × α^2.5 + нагрузка ΔP
-    // При закрытии НА ток СНИЖАЕТСЯ — это ключевое преимущество перед шибером
-    O.fanAmps = C.fanMaxAmps * n*n*n * Math.pow(alpha, 2.5) + O.avgDP * 20;
-    if(n<=0) O.fanAmps = 0;
-
-    // 4. Генерация загрязнителей
-    let hfGen = C.hfGenFactor * C.potroomCurrent;
-    let dustGen = C.dustGenFactor * C.potroomCurrent;
-    O.hfIn = O.normalFlow > 0 ? (hfGen*1e6)/O.normalFlow : 0;
-
-    // 5. ДВУХСТУПЕНЧАТАЯ АДСОРБЦИЯ
-    let effAlumina = I.freshFeed*1.0 + I.recircFeed*C.recircEfficiency;
-    let tempPenalty = 1.0;
-    if(I.gasTemp>120) tempPenalty = Math.exp(-0.012*(I.gasTemp-120));
-    let humBonus = 1.0 + (I.gasHumidity/100)*0.2;
-    let contactF = 1.0;
-    if(O.gasVelocity>0) contactF = Math.min(1.0, 4.0/Math.max(1,O.gasVelocity));
-
-    // η₁ — Реактор
-    let rRatio = hfGen>0 ? effAlumina/hfGen : 0;
-    let eta1 = C.maxReactorEff*(1-Math.exp(-C.reactorK*rRatio))*tempPenalty*contactF*humBonus;
-    eta1 = Math.max(0, Math.min(C.maxReactorEff, eta1));
-
-    // η₂ — Пирог на рукавах (filsorption)
-    let avgCake = S.sections.reduce((a,s)=>a+s.cakeMass,0)/C.numSections;
-    let cRatio = avgCake/30;
-    let eta2 = C.maxCakeEff*(1-Math.exp(-C.cakeK*cRatio))*tempPenalty;
-    eta2 = Math.max(0, Math.min(C.maxCakeEff, eta2));
-
-    // Каскад
-    let effTotal = 1-(1-eta1)*(1-eta2);
-    O.effReactor = eta1*100;
-    O.effCake = eta2*100;
-    O.effHF = effTotal*100;
-    O.hfOut = O.hfIn*(1-effTotal);
-
-    // 6. Фильтрация пыли
-    let tornFrac = Math.min(I.tornBags/C.totalBags, 0.25);
-    let dustEff = 99.95 - tornFrac*100*0.5 + I.gasHumidity*0.02;
-    O.effDust = Math.max(50, Math.min(99.99, dustEff));
-    let totalMassIn = dustGen + (I.freshFeed+I.recircFeed)*1000;
-    O.dustOut = O.normalFlow>0 ? (totalMassIn*(1-O.effDust/100)*1e6)/O.normalFlow : 0;
-
-    // 7. Пирог на секциях
-    let mps = O.gasFlow>0 ? totalMassIn/C.numSections : 0;
-    S.sections.forEach(sec=>{
-        if(sec.isRegen){
-            sec.cakeMass*=0.75; sec.dp-=0.03; sec.regenTimer--;
-            if(sec.regenTimer<=0||sec.dp<=C.baseDP+0.05){sec.isRegen=false;sec.dp=Math.max(C.baseDP,sec.dp);if(sec.cakeMass<1)sec.cakeMass=1;}
-        } else if(O.gasFlow>0){
-            sec.cakeMass += mps*0.00004;
-            let cDP = (sec.cakeMass*sec.cakeMass)*0.0003;
-            let tInSec = Math.min(I.tornBags,C.bagsPerSection)/C.bagsPerSection;
-            cDP *= (1-tInSec*0.4);
-            sec.dp = C.baseDP + cDP*(1+I.gasHumidity*0.01);
-        }
-    });
-
-    // 8. Авто-регенерация (секционная)
-    if(P.regenCooldown>0) P.regenCooldown--;
-    if(P.regenCooldown<=0){
-        let wi=-1,wd=0;
-        S.sections.forEach((s,i)=>{if(!s.isRegen&&s.dp>=I.regenSP&&s.dp>wd){wd=s.dp;wi=i;}});
-        if(wi>=0){S.sections[wi].isRegen=true;S.sections[wi].regenTimer=15;P.regenCooldown=45;}
-    }
-
-    // 9. Содержание F в глинозёме
-    let hfCap = hfGen*effTotal;
-    let fCap = hfCap*(19/20);
-    let totAl = (I.freshFeed+I.recircFeed)*1000;
-    if(totAl>0){
-        O.fContent = (fCap/totAl)*100;
-        P.fContentAccum += (O.fContent-P.fContentAccum)*0.001;
-        O.fContent = Math.min(C.maxFContent, P.fContentAccum+O.fContent*0.5);
-    } else O.fContent=0;
-
-    // 10. Статус
-    let b=[];
-    if(O.avgDP>I.regenSP*1.5) b.push('КРИТИЧ. ΔP');
-    else if(O.avgDP>I.regenSP) b.push('ВЫСОКИЙ ΔP');
-    if(I.tornBags>0) b.push(`ПРОРЫВ: ${I.tornBags} рук.`);
-    if(O.effHF<95) b.push('ПРОСКОК HF');
-    if(I.inletDraft>-50) b.push('ВЫБИВАНИЕ');
-    if(I.fanRPM===0) b.push('ДЫМОСОС СТОП');
-    if(I.gasTemp>160) b.push('ПЕРЕГРЕВ');
-    if(I.guideVane<20) b.push('НА ПРИКРЫТ');
-    O.status = b.length>0 ? b.join(' | ') : 'НОРМА';
-
-    P.fanAngle += n*alpha*0.4;
-}
-
-// ── ОТРИСОВКА ──
-function drawPlant(){
-    ctx.lineWidth=2; ctx.strokeStyle='#2d333b'; ctx.font='11px monospace';
-    const BG='#0d1117',WALL='#2d333b',LBL='#6e7681';
-
-    // 1. Входной газоход
-    ctx.fillStyle=BG;ctx.fillRect(0,H*0.42,W*0.22,H*0.12);ctx.strokeRect(0,H*0.42,W*0.22,H*0.12);
-    ctx.fillStyle='#ef4444';ctx.fillText('ГРЯЗНЫЙ ГАЗ (HF+пыль)',8,H*0.41);
-    let dc=S.in.inletDraft<-100?'#3fb950':(S.in.inletDraft<-50?'#d29922':'#f85149');
-    ctx.fillStyle=dc;ctx.fillText(`Разр: ${S.in.inletDraft} Па`,8,H*0.57);
-
-    // 2. Реактор
-    ctx.fillStyle=BG;ctx.fillRect(W*0.22,H*0.2,W*0.18,H*0.56);ctx.strokeRect(W*0.22,H*0.2,W*0.18,H*0.56);
-    ctx.fillStyle=LBL;ctx.fillText('РЕАКТОР',W*0.27,H*0.19);
-    ctx.strokeStyle='#30363d';ctx.setLineDash([3,3]);
-    for(let i=0;i<3;i++){ctx.beginPath();ctx.arc(W*0.31,H*0.48,12+i*10,0,Math.PI*1.5);ctx.stroke();}
-    ctx.setLineDash([]);ctx.strokeStyle=WALL;
-
-    // Силос свежий
-    ctx.fillStyle='#111827';ctx.fillRect(W*0.22,H*0.02,W*0.08,H*0.14);ctx.strokeRect(W*0.22,H*0.02,W*0.08,H*0.14);
-    ctx.strokeStyle='#e2e8f0';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(W*0.26,H*0.16);ctx.lineTo(W*0.26,H*0.20);ctx.stroke();
-    ctx.strokeStyle=WALL;ctx.lineWidth=2;
-    ctx.fillStyle='#c9d1d9';ctx.fillText(`Al₂O₃ ${S.in.freshFeed}т/ч`,W*0.22,H*0.02-4);
-
-    // Силос фторированный
-    ctx.fillStyle='#1a1500';ctx.fillRect(W*0.32,H*0.02,W*0.08,H*0.14);ctx.strokeRect(W*0.32,H*0.02,W*0.08,H*0.14);
-    ctx.strokeStyle='#fbbf24';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(W*0.36,H*0.16);ctx.lineTo(W*0.36,H*0.20);ctx.stroke();
-    ctx.strokeStyle=WALL;ctx.lineWidth=2;
-    ctx.fillStyle='#fbbf24';ctx.fillText(`AlF₃ ${S.in.recircFeed}т/ч`,W*0.32,H*0.02-4);
-
-    // 3. Газоход реактор→фильтр
-    ctx.fillStyle=BG;ctx.fillRect(W*0.40,H*0.40,W*0.10,H*0.14);ctx.strokeRect(W*0.40,H*0.40,W*0.10,H*0.14);
-
-    // 4. Рукавный фильтр
-    ctx.fillStyle=BG;ctx.fillRect(W*0.50,H*0.15,W*0.18,H*0.55);ctx.strokeRect(W*0.50,H*0.15,W*0.18,H*0.55);
-    ctx.fillStyle=LBL;ctx.fillText('РУКАВНЫЙ ФИЛЬТР',W*0.52,H*0.14);
-
-    // Рукава по секциям
-    S.sections.forEach((sec,si)=>{
-        let sx=W*0.51+si*(W*0.16/4), ex=sx+W*0.16/4;
-        let dp01=Math.min(1,(sec.dp-S.cfg.baseDP)/(S.in.regenSP*1.5-S.cfg.baseDP));
-        for(let bi=0;bi<2;bi++){
-            let bx=sx+(ex-sx)/3*(bi+1);
-            let tis=Math.floor(S.in.tornBags/S.cfg.numSections);
-            if(bi<tis){ctx.strokeStyle='#f85149';ctx.lineWidth=3;ctx.setLineDash([5,5]);}
-            else if(sec.isRegen){ctx.strokeStyle='#58a6ff';ctx.lineWidth=3;ctx.setLineDash([]);}
-            else{let r=Math.floor(70+185*dp01),g=Math.floor(100*(1-dp01)),b=Math.floor(60*(1-dp01));ctx.strokeStyle=`rgb(${r},${g},${b})`;ctx.lineWidth=3+dp01*4;ctx.setLineDash([]);}
-            ctx.beginPath();ctx.moveTo(bx,H*0.20);ctx.lineTo(bx,H*0.62);ctx.stroke();ctx.setLineDash([]);
-        }
-        if(si>0){ctx.strokeStyle='#30363d55';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(sx,H*0.16);ctx.lineTo(sx,H*0.69);ctx.stroke();}
-    });
-    ctx.lineWidth=2;
-
-    // ΔP label
-    let dpC=S.out.avgDP>S.in.regenSP?'#f85149':(S.out.avgDP>S.in.regenSP*0.8?'#d29922':'#3fb950');
-    ctx.fillStyle=dpC;ctx.font='bold 12px monospace';
-    ctx.fillText(`ΔP: ${S.out.avgDP.toFixed(2)} кПа`,W*0.52,H*0.73);ctx.font='11px monospace';
-
-    // Бункер
-    ctx.strokeStyle=WALL;
-    ctx.beginPath();ctx.moveTo(W*0.50,H*0.70);ctx.lineTo(W*0.68,H*0.70);ctx.lineTo(W*0.64,H*0.87);ctx.lineTo(W*0.54,H*0.87);ctx.closePath();ctx.stroke();
-
-    // Аэрожелоб рециркуляции (пунктир)
-    ctx.strokeStyle='#fbbf2466';ctx.lineWidth=2;ctx.setLineDash([4,4]);
-    ctx.beginPath();ctx.moveTo(W*0.59,H*0.87);ctx.lineTo(W*0.59,H*0.93);ctx.lineTo(W*0.36,H*0.93);ctx.lineTo(W*0.36,H*0.16);ctx.stroke();
-    ctx.setLineDash([]);ctx.fillStyle='#fbbf24';ctx.font='9px monospace';ctx.fillText('↑ АЭРОЖЕЛОБ РЕЦИРКУЛЯЦИИ',W*0.38,H*0.96);
-    ctx.strokeStyle=WALL;ctx.lineWidth=2;ctx.font='11px monospace';
-
-    // 5. Газоход→дымосос
-    ctx.fillStyle=BG;ctx.fillRect(W*0.68,H*0.42,W*0.10,H*0.12);ctx.strokeRect(W*0.68,H*0.42,W*0.10,H*0.12);
-
-    // 6. Дымосос (с индикатором НА)
-    let fx=W*0.80,fy=H*0.48,fr=H*0.07;
-    ctx.beginPath();ctx.arc(fx,fy,fr,0,Math.PI*2);ctx.fillStyle=BG;ctx.fill();
-    ctx.strokeStyle=S.in.fanRPM>0?'#58a6ff':'#f85149';ctx.stroke();
-
-    // Направляющий аппарат — дуга показывающая степень открытия
-    let vaneAngle = (S.in.guideVane/100)*Math.PI*2;
-    ctx.beginPath();ctx.arc(fx,fy,fr+5,0,vaneAngle);
-    ctx.strokeStyle=S.in.guideVane>50?'#3fb950':(S.in.guideVane>20?'#d29922':'#f85149');
-    ctx.lineWidth=3;ctx.stroke();ctx.lineWidth=2;ctx.strokeStyle=WALL;
-
-    ctx.fillStyle=LBL;ctx.fillText('ДЫМОСОС',fx-28,fy-fr-14);
-    ctx.fillStyle=S.in.guideVane>50?'#3fb950':'#d29922';
-    ctx.font='10px monospace';ctx.fillText(`НА: ${S.in.guideVane}%`,fx-18,fy-fr-4);ctx.font='11px monospace';
-
-    // Лопасти
-    ctx.save();ctx.translate(fx,fy);ctx.rotate(S.phys.fanAngle);
-    ctx.strokeStyle=S.in.fanRPM>0?'#58a6ff':'#6e7681';ctx.lineWidth=3;
-    for(let i=0;i<6;i++){ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(fr-4,0);ctx.stroke();ctx.rotate(Math.PI/3);}
-    ctx.restore();ctx.strokeStyle=WALL;ctx.lineWidth=2;
-
-    // 7. Газоход к трубе
-    ctx.fillStyle=BG;ctx.fillRect(fx+fr+5,H*0.42,W*0.88-fx-fr-5,H*0.12);ctx.strokeRect(fx+fr+5,H*0.42,W*0.88-fx-fr-5,H*0.12);
-
-    // 8. Труба
-    ctx.fillStyle=BG;ctx.fillRect(W*0.88,H*0.05,W*0.09,H*0.85);ctx.strokeRect(W*0.88,H*0.05,W*0.09,H*0.85);
-    ctx.fillStyle='#34d399';ctx.fillText('ТРУБА',W*0.89,H*0.04);
-
-    // Легенда
-    ctx.font='8px monospace';
-    [['#ef4444','HF+Пыль'],['#34d399','Чист.газ'],['#e2e8f0','Al₂O₃'],['#fbbf24','AlF₃(рец)'],['#fb923c','Проскок']].forEach(([c,t],i)=>{
-        let x=W*0.01+i*W*0.055;ctx.fillStyle=c;ctx.fillRect(x,H*0.93,5,5);ctx.fillText(t,x+7,H*0.93+5);
-    });
-}
-
-// ── ЭМИССИЯ ЧАСТИЦ ──
-function emitParticles(){
-    let f=S.out.gasFlow, em=Math.min(2,f/200000);
-
-    if(f>0&&Math.random()<em*0.5) particles.push(new Particle('dirty',0,H*0.43+Math.random()*H*0.10,3,0));
-    if(S.in.inletDraft>-80&&Math.random()<0.12) particles.push(new Particle('fugitive',W*0.10+Math.random()*W*0.05,H*0.42,(Math.random()-0.5)*2,-2-Math.random()*2));
-    if(S.in.freshFeed>0&&Math.random()<S.in.freshFeed/8) particles.push(new Particle('fresh',W*0.24+Math.random()*W*0.03,H*0.16,0,1.5));
-    if(S.in.recircFeed>0&&Math.random()<S.in.recircFeed/30) particles.push(new Particle('fluor',W*0.34+Math.random()*W*0.03,H*0.16,0,1.5));
-    if(S.in.tornBags>0&&f>0&&Math.random()<S.in.tornBags*0.015) particles.push(new Particle('dust',W*0.52+Math.random()*W*0.14,H*0.30,2,(Math.random()-0.5)));
-
-    // Рециркуляция: жёлтые частицы из бункера по аэрожелобу обратно в силос
-    if(f>0&&Math.random()<0.08){
-        let p = new Particle('recirc_return',W*0.57+Math.random()*W*0.04,H*0.73,0,0);
-        p.phase = 'hopper';
-        particles.push(p);
-    }
-
-    while(particles.length>800) particles.shift();
-}
-
-// ── UI ──
-function updateUI(){
-    const O=S.out;
-    const set=(id,t,c)=>{const e=document.getElementById(id);e.textContent=t;if(c!==undefined)e.className='tval '+c;};
-    set('T-flow',`${Math.round(O.gasFlow).toLocaleString('ru-RU')} м³/ч`);
-    set('T-vel',`${O.gasVelocity.toFixed(1)} м/с`);
-    set('T-dp',`${O.avgDP.toFixed(2)} кПа`,O.avgDP>S.in.regenSP*1.3?'warn':(O.avgDP>S.in.regenSP*0.8?'caution':''));
-    set('T-amps',`${Math.round(O.fanAmps)} А`,O.fanAmps>S.cfg.fanMaxAmps*0.9?'warn':'');
-    set('T-hfIn',`${O.hfIn.toFixed(1)} мг/нм³`);
-    set('T-hfOut',`${O.hfOut.toFixed(2)} мг/нм³`,O.hfOut>1.0?'warn':(O.hfOut>0.5?'caution':''));
-    set('T-dustOut',`${O.dustOut.toFixed(1)} мг/нм³`,O.dustOut>10?'warn':(O.dustOut>5?'caution':''));
-    set('T-eff1',`${O.effReactor.toFixed(1)} %`,O.effReactor<40?'warn':(O.effReactor<55?'caution':'ok'));
-    set('T-eff2',`${O.effCake.toFixed(1)} %`,O.effCake<90?'warn':(O.effCake<95?'caution':'ok'));
-    set('T-effHF',`${O.effHF.toFixed(1)} %`,O.effHF<95?'warn':(O.effHF<98?'caution':'ok'));
-    set('T-effDust',`${O.effDust.toFixed(1)} %`,O.effDust<98?'warn':'ok');
-    set('T-fContent',`${O.fContent.toFixed(2)} wt%`,O.fContent>2.0?'caution':'');
-    const st=document.getElementById('T-status');st.textContent=O.status;st.className='tval '+(O.status==='НОРМА'?'ok':'warn');
-
-    S.sections.forEach((sec,i)=>{
-        let fl=document.getElementById('SF-'+i),lb=document.getElementById('SL-'+i);
-        let d=Math.min(1,(sec.dp-S.cfg.baseDP)/(S.in.regenSP*1.5-S.cfg.baseDP));
-        fl.style.height=(d*100)+'%';
-        if(sec.isRegen){fl.style.background='#58a6ff';lb.textContent=`С${i+1}↻`;}
-        else{let r=Math.floor(63+185*d),g=Math.floor(185*(1-d)),b=Math.floor(80*(1-d));fl.style.background=`rgb(${r},${g},${b})`;lb.textContent=`С${i+1} ${sec.dp.toFixed(1)}`;}
-    });
-}
-
-// ── ГЛАВНЫЙ ЦИКЛ ──
-function render(){
-    physics();
-    ctx.fillStyle='#05070a';ctx.fillRect(0,0,W,H);
-    drawPlant(); emitParticles();
-    let spd=S.out.gasFlow/200000;
-    for(let i=particles.length-1;i>=0;i--){let p=particles[i];p.update(spd);p.draw(ctx);if(!p.alive)particles.splice(i,1);}
-    updateUI();
-    requestAnimationFrame(render);
-}
-
-// ── ПРИВЯЗКА ──
-function bind(iid,lid,key,suf,p=parseFloat){
-    const el=document.getElementById(iid),lbl=document.getElementById(lid);
-    if(!el||!lbl)return;
-    el.addEventListener('input',e=>{const v=p(e.target.value);S.in[key]=v;lbl.textContent=`${v} ${suf}`;});
-}
-bind('I-rpm','L-rpm','fanRPM','%',parseInt);
-bind('I-vane','L-vane','guideVane','%',parseInt);
-bind('I-temp','L-temp','gasTemp','°C',parseInt);
-bind('I-hum','L-hum','gasHumidity','%',parseInt);
-bind('I-draft','L-draft','inletDraft','Па',parseInt);
-bind('I-fresh','L-fresh','freshFeed','т/ч');
-bind('I-recirc','L-recirc','recircFeed','т/ч');
-bind('I-regenSP','L-regenSP','regenSP','кПа');
-
-document.getElementById('I-torn').addEventListener('input',e=>{S.in.tornBags=Math.max(0,parseInt(e.target.value)||0);});
-
-// Ручная продувка
-document.getElementById('btn-pulse').addEventListener('click',()=>{
-    S.sections.forEach(s=>{s.isRegen=true;s.regenTimer=20;});
-    const b=document.getElementById('btn-pulse');b.textContent='✓ OK';setTimeout(()=>b.textContent='⚡ Продувка',800);
-});
-
-// Кнопка «Прорыв рукава» — добавляет +1 порванный рукав при каждом нажатии
-document.getElementById('btn-rupture').addEventListener('click',()=>{
-    S.in.tornBags++;
-    document.getElementById('I-torn').value = S.in.tornBags;
-    // Визуальный эффект: всплеск пыли
-    for(let i=0;i<15;i++){
-        particles.push(new Particle('dust',
-            W*0.52+Math.random()*W*0.14,
-            H*0.25+Math.random()*H*0.3,
-            3+Math.random()*3,
-            (Math.random()-0.5)*4
-        ));
-    }
-    const b=document.getElementById('btn-rupture');
-    b.textContent=`💥 ПРОРЫВ! (${S.in.tornBags} шт)`;
-    setTimeout(()=>b.textContent='💥 Прорыв рукава',1200);
-});
-
-render();
-</script>
 </body>
 </html>
