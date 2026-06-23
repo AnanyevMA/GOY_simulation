@@ -145,6 +145,9 @@ export function updateTelemetry(state, econ) {
     set('T-effHF',   `${O.effHF.toFixed(1)} %`,      O.effHF < 95 ? 'warn' : (O.effHF < 98 ? 'caution' : 'ok'));
     set('T-effDust', `${O.effDust.toFixed(1)} %`,     O.effDust < 98 ? 'warn' : 'ok');
     set('T-fContent',`${O.fContent.toFixed(2)} wt%`,  O.fContent > 2.0 ? 'caution' : '');
+    set('T-contact', `${O.contactTime.toFixed(1)} с`,  O.contactTime < 1.5 ? 'warn' : (O.contactTime < 2.0 ? 'caution' : 'ok'));
+    set('T-vfilt',   `${(O.filtVelocity * 100).toFixed(1)} см/с`);
+    set('T-draft',   `${Math.round(O.calcDraft)} Па`,  O.calcDraft > -50 ? 'warn' : (O.calcDraft > -100 ? 'caution' : 'ok'));
 
     set('T-airP',    `${O.receiverP.toFixed(2)} МПа`, O.receiverP < 0.35 ? 'warn' : (O.receiverP < 0.45 ? 'caution' : 'ok'));
 
