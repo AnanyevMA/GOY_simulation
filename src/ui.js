@@ -31,6 +31,7 @@ export function initUI(state, callbacks) {
     bind('I-fresh',  'L-fresh',  'freshFeed',   'т/ч', I);
     bind('I-recirc', 'L-recirc', 'recircFeed',  'т/ч', I);
     bind('I-regenSP','L-regenSP','regenSP',     'кПа', I);
+    bind('I-timeSpeed','L-timeSpeed','timeSpeed','x', I, parseInt);
 
     // Порванные рукава (числовое поле)
     const tornEl = document.getElementById('I-torn');
@@ -101,9 +102,10 @@ export function syncSlidersToState(state) {
     sync('I-temp',    'L-temp',    I.gasTempSP,    '°C');
     sync('I-hum',     'L-hum',     I.gasHumidity,  '%');
     sync('I-draft',   'L-draft',   I.inletDraft,   'Па');
-    sync('I-fresh',   'L-fresh',   I.freshFeed,    'т/ч');
-    sync('I-recirc',  'L-recirc',  I.recircFeed,   'т/ч');
-    sync('I-regenSP', 'L-regenSP', I.regenSP,      'кПа');
+    sync('I-fresh',   'L-fresh',   I.freshFeed,   'т/ч');
+    sync('I-recirc',  'L-recirc',  I.recircFeed,  'т/ч');
+    sync('I-regenSP', 'L-regenSP', I.regenSP,     'кПа');
+    sync('I-timeSpeed','L-timeSpeed', I.timeSpeed,'x');
 
     const tornEl = document.getElementById('I-torn');
     if (tornEl) tornEl.value = I.tornBags;

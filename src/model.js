@@ -69,6 +69,7 @@ export const state = {
         recircFeed:  20,      // Рецирк. AlF₃ (т/ч)
         regenSP:     1.2,     // Уставка авто-продувки (кПа)
         tornBags:    0,       // Порвано рукавов
+        timeSpeed:   1,       // Скорость симуляции
         pipes: [
             { id: '1A', damper: 100 },
             { id: '1B', damper: 100 },
@@ -93,7 +94,7 @@ export const state = {
         actualTemp:     110,     // Фактическая T° газа (с инерцией)
         receiverPressure: 0.60,  // Давление в ресивере (МПа)
         tickCount:      0,
-        networkK:       0.00001, // Удельное сопротивление сети (кПа·ч²/м⁶)
+        networkK:       8e-12,   // Удельное сопротивление сети (кПа·ч²/м⁶) ~0.7кПа/(300000)²
     },
 
     // Выходные параметры (рассчитываются каждый тик)
@@ -182,18 +183,20 @@ export function tick() {
     // Температурный фактор (Гей-Люссак)
     const tempFactor = (T + 273) / 273;
 
-    // Удельное сопротивление сети: k = ΔP_total / Q²
-    // Используем сглаженное k для устранения осцилляций
-    if (O.gasFlow > 1000) {
-        const newK = O.totalDP / (O.gasFlow * O.gasFlow);
-        P.networkK += (newK - P.networkK) * 0.1; // Сглаживание
-    }
-
     // Рабочая точка: Q = Qmax / √(1 + k·Qmax²/Pmax)
     let gasFlowNorm = 0;
     if (Pmax > 0.01 && n > 0) {
         const denom = 1 + P.networkK * Qmax * Qmax / Pmax;
         gasFlowNorm = denom > 0 ? Qmax / Math.sqrt(denom) : 0;
+    }
+
+    // Обновление удельного сопротивления сети: k = ΔP_total / Q²
+    // Используем gasFlowNorm текущего тика для корректировки k к следующему
+    if (gasFlowNorm > 100) {
+        const newK = O.totalDP / (gasFlowNorm * gasFlowNorm);
+        if (isFinite(newK) && newK > 0) {
+            P.networkK += (newK - P.networkK) * 0.1; // Сглаживание
+        }
     }
 
     O.gasFlow = gasFlowNorm * tempFactor;
@@ -262,7 +265,8 @@ export function tick() {
 
     // η₂ — Пирог на рукавах (filsorption)
     const avgCake = state.sections.reduce((a, s) => a + s.cakeMass, 0) / C.numSections;
-    const cRatio = avgCake / 30;
+    // avgCake это удельная масса W (кг/м²). Нормализуем для константы (3.0 кг/м² — хороший пирог)
+    const cRatio = avgCake / 3.0;
     let eta2 = C.maxCakeEff * (1 - Math.exp(-C.cakeK * cRatio)) * tempPenalty;
     eta2 = Math.max(0, Math.min(C.maxCakeEff, eta2));
 
@@ -300,17 +304,21 @@ export function tick() {
             }
             sec.regenTimer--;
             // Пересчёт ΔP после сброса
-            const W = sec.cakeMass / sectionArea;
+            const W = sec.cakeMass; // cakeMass уже в кг/м²
             sec.dp = C.baseDP + (C.cakeResistance * vf * W * (1 + I.gasHumidity * 0.01)) / 1000;
             if (sec.regenTimer <= 0) {
                 sec.isRegen = false;
                 sec.dp = Math.max(C.baseDP, sec.dp);
             }
         } else if (O.gasFlow > 0) {
-            // Накопление пирога
-            sec.cakeMass += mps * 0.00004;
+            // Накопление пирога (прирост W = (масса/сек) / площадь)
+            // mps — кг/ч. Для интерактивности симуляции ускоряем накопление в 60 раз (1 сек = 1 мин реального времени)
+            const simTimeFactor = 60;
+            const deltaW = (mps * 0.1 * simTimeFactor / 3600) / sectionArea;
+            sec.cakeMass += deltaW;
+
             // [FIX 5] ΔP через скорость фильтрации и поверхностную нагрузку
-            const W = sec.cakeMass / sectionArea; // кг/м²
+            const W = sec.cakeMass; // кг/м²
             const tInSec = Math.min(I.tornBags, C.bagsPerSection) / C.bagsPerSection;
             const tornReduction = (1 - tInSec * 0.4); // порванные рукава снижают ΔP
             sec.dp = C.baseDP + (C.cakeResistance * vf * W * tornReduction * (1 + I.gasHumidity * 0.01)) / 1000;

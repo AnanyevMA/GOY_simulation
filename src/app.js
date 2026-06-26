@@ -32,15 +32,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Chart.js тренды
     initCharts();
 
-    // ── Физическая симуляция (10 Гц) ──
+    // ── Физическая симуляция (10 Гц базовая, ускоряется) ──
     setInterval(() => {
-        tick();
-        // Алармы
-        processAlarms(state.alarms);
+        const speed = state.inputs.timeSpeed || 1;
+        for (let i = 0; i < speed; i++) {
+            tick();
+            processAlarms(state.alarms);
+        }
     }, 100);
 
     // ── Обновление телеметрии и трендов (1 Гц) ──
     setInterval(() => {
+        const speed = state.inputs.timeSpeed || 1;
         const econ = calcEconomics(state.out);
         updateTelemetry(state, econ);
         updateCharts(state);
