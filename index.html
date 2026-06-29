@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Цифровой двойник СГОУ — Antigravity v4.0</title>
+    <title>Цифровой двойник СГОУ — Antigravity v6.0</title>
     <meta name="description" content="Интерактивная 2D-симуляция сухой газоочистной установки алюминиевого завода">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <style>
@@ -187,6 +187,7 @@
         <div class="trow"><span class="tlbl">F в глинозёме</span><span id="T-fContent" class="tval">—</span></div>
         <div class="trow"><span class="tlbl">τ контакта</span><span id="T-contact" class="tval ok">—</span></div>
         <div class="trow"><span class="tlbl">V фильтрации</span><span id="T-vfilt" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">Циклы реген./ч</span><span id="T-regenCycles" class="tval">—</span></div>
         <div class="sep"></div>
         <div class="trow"><span class="tlbl">Разрежение (расч.)</span><span id="T-draft" class="tval ok">—</span></div>
         <div class="sep"></div>
@@ -217,6 +218,7 @@
         <div class="sw"><div class="sw-head"><span>Температура газа (SP)</span><span class="sw-val" id="L-temp">110 °C</span></div><input type="range" id="I-temp" min="80" max="200" value="110"></div>
         <div class="sw"><div class="sw-head"><span>Влажность</span><span class="sw-val" id="L-hum">5 %</span></div><input type="range" id="I-hum" min="0" max="20" value="5"></div>
         <div class="sw"><div class="sw-head"><span>Разрежение газохода</span><span class="sw-val" id="L-draft">-150 Па</span></div><input type="range" id="I-draft" min="-400" max="0" value="-150"></div>
+        <div class="sw"><div class="sw-head"><span>Т наружного воздуха</span><span class="sw-val" id="L-outdoor">20 °C</span></div><input type="range" id="I-outdoor" min="-40" max="40" value="20"></div>
     </div>
 
     <!-- ─── ШИБЕРЫ ТРУБ ─── -->
@@ -244,7 +246,7 @@
         <div class="sw" style="margin-top:8px;"><div class="sw-head"><span>Скорость симуляции</span><span class="sw-val" id="L-timeSpeed">1x</span></div><input type="range" id="I-timeSpeed" min="1" max="10" step="1" value="1"></div>
         <div class="trow" style="margin-top:8px;"><span class="tlbl">Порвано рукавов</span><input type="number" class="num-input" id="I-torn" min="0" max="100" value="0"></div>
         <div class="btn-row">
-            <button class="btn btn-green" id="btn-pulse">⚡ Продувка</button>
+            <button class="btn btn-green" id="btn-pulse">⚠ Авар. продувка</button>
             <button class="btn btn-red" id="btn-rupture">💥 Прорыв рукава</button>
         </div>
     </div>
@@ -274,7 +276,7 @@
         <div class="alarm-box" id="alarm-log"><div class="alarm-entry" style="color:#3fb950;">[System] Симулятор запущен</div></div>
     </div>
 
-    <div class="footer">Antigravity Digital Twin v4.1 · ES6 модули · НДТ · см. README.md</div>
+    <div class="footer">Antigravity Digital Twin v6.0 · ES6 модули · НДТ · см. README.md</div>
 </div>
 
 <!-- ═══════ ES6 МОДУЛИ ═══════ -->

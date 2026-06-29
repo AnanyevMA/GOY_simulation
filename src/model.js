@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════════════
-//  ANTIGRAVITY СГОУ — ФИЗИЧЕСКИЙ ДВИЖОК v4.1
-//  Аналитическая рабочая точка, N=Q·ΔP/η, время контакта через V/Q,
-//  HF∝T, ΔP=f(vf,W), импульсный сброс, F% экспоненциальный фильтр.
+//  ANTIGRAVITY СГОУ — ФИЗИЧЕСКИЙ ДВИЖОК v6.0
+//  v6: динамическая пыль, накопление F%, плотность→ток, Т наружного,
+//  счётчик циклов регенерации, корректный масштаб пыли.
 // ═══════════════════════════════════════════════════════════════════════
 
 // ── Конфигурация установки (константы) ──
@@ -70,6 +70,7 @@ export const state = {
         regenSP:     1.2,     // Уставка авто-продувки (кПа)
         tornBags:    0,       // Порвано рукавов
         timeSpeed:   1,       // Скорость симуляции
+        outdoorTemp: 20,      // Температура наружного воздуха (°C)
         pipes: [
             { id: '1A', damper: 100 },
             { id: '1B', damper: 100 },
@@ -95,6 +96,8 @@ export const state = {
         receiverPressure: 0.60,  // Давление в ресивере (МПа)
         tickCount:      0,
         networkK:       8e-12,   // Удельное сопротивление сети (кПа·ч²/м⁶) ~0.7кПа/(300000)²
+        regenCycles:    [],      // Таймстампы циклов регенерации для подсчёта ц/ч
+        dustSpikeTicks: 0,       // Тики оставшегося скачка пыли при регенерации
     },
 
     // Выходные параметры (рассчитываются каждый тик)
@@ -122,6 +125,8 @@ export const state = {
         contactTime:  2.5,    // Время контакта в реакторе (сек)
         airConsumption: 0,    // Расход сжатого воздуха (нм³/ч)
         receiverP:    0.60,   // Давление в ресивере (МПа)
+        regenCyclesPerHour: 0, // Циклы регенерации в час
+        outdoorTemp:  20,     // Т наружного воздуха (для отображения)
         status:       'НОРМА',
         // Потоки по трубам (для UI)
         pipeFlows: [
@@ -153,10 +158,16 @@ export function tick() {
     state.alarms = []; // Сброс алармов на этот тик
     O.pulseFlash = [false, false, false, false];
 
-    // ── 1. ТЕПЛОВАЯ ИНЕРЦИЯ (Ньютон-Рихман) ──
-    // T_actual += (T_setpoint - T_actual) × k × dt
-    // При k=0.008 и 10 тиков/сек: τ ≈ 12.5 секунд (63% за ~12 сек)
-    P.actualTemp += (I.gasTempSP - P.actualTemp) * C.thermalK;
+    // ── 1. ТЕПЛОВАЯ ИНЕРЦИЯ (Ньютон-Рихман) И ТЕПЛОПОТЕРИ ──
+    // Газ охлаждается в газоходах за счет теплоотдачи в окружающую среду.
+    // Чем длиннее газоход и чем ниже Т наружного воздуха, тем сильнее остывает газ.
+    // При скорости ~10-15 м/с потери составляют около 5-15°C в зависимости от сезона.
+    const velocityFactor = O.gasVelocity > 0 ? (15 / Math.max(O.gasVelocity, 2)) : 1;
+    const coolingFactor = 0.05 * velocityFactor; // Доля потери разницы температур
+    const targetTemp = I.gasTempSP - coolingFactor * (I.gasTempSP - I.outdoorTemp);
+
+    // T_actual += (T_target - T_actual) × k × dt
+    P.actualTemp += (targetTemp - P.actualTemp) * C.thermalK;
     O.actualTemp = P.actualTemp;
     const T = P.actualTemp;
 
@@ -165,9 +176,13 @@ export function tick() {
 
     // ── 3. СОПРОТИВЛЕНИЕ ГАЗОХОДОВ (Дарси-Вейсбах) ──
     // ΔP_duct = λ × (L/D) × (ρ × v²/2) / 1000 (кПа)
+    // Плотность газа зависит от T газа, а плотность воздуха на входе — от Т наружного
     const rhoGas = 1.29 * 273 / (T + 273);
+    const rhoAir = 1.29 * 273 / (I.outdoorTemp + 273); // Плотность подсасываемого воздуха
+    const rhoRatio = rhoAir / 1.205;  // 1.205 = ρ при 20°C (эталон)
     const vPrev = O.gasVelocity || 8;
     O.ductDP = C.ductFriction * (C.ductLength / C.ductDiameter) * (rhoGas * vPrev * vPrev / 2) / 1000;
+    O.outdoorTemp = I.outdoorTemp;
 
     // ── 4. ОБЩЕЕ ΔP ТРАКТА ──
     O.totalDP = O.avgFilterDP + O.ductDP + C.reactorDP;
@@ -178,7 +193,10 @@ export function tick() {
     const alpha = I.guideVane / 100;
 
     const Qmax = C.nominalFlow * n * alpha;           // м³/ч (при норм. усл.)
-    const Pmax = C.maxFanPressure * n * n * Math.pow(alpha, 1.5); // кПа
+    // [v6] Напор дымососа корректируется на плотность газа (ΔP ∝ ρ)
+    // В зимний период (Т=-30°C) ρ выше → напор выше → ампераж выше
+    // В летний период (Т=+35°C) ρ ниже → напор ниже → ампераж ниже
+    const Pmax = C.maxFanPressure * n * n * Math.pow(alpha, 1.5) * rhoRatio; // кПа
 
     // Температурный фактор (Гей-Люссак)
     const tempFactor = (T + 273) / 273;
@@ -278,13 +296,37 @@ export function tick() {
     O.effHF = effTotal * 100;
     O.hfOut = O.hfIn * (1 - effTotal);
 
-    // ── 10. ФИЛЬТРАЦИЯ ПЫЛИ ──
-    const tornFrac = Math.min(I.tornBags / C.totalBags, 0.25);
-    let dustEff = 99.95 - tornFrac * 100 * 0.5 + I.gasHumidity * 0.02;
-    O.effDust = Math.max(50, Math.min(99.99, dustEff));
+    // ── 10. [v6] ДИНАМИЧЕСКАЯ МОДЕЛЬ ПЫЛИ ──
+    // Базовая пыль при целых фильтрах: 2-5 мг/нм³
+    // Зависит от: cakeMass (тоньше пирог → больше проскок), tornBags, регенерация
     const totalMassIn = dustGen + (I.freshFeed + I.recircFeed) * 1000;
-    O.dustOut = O.normalFlow > 0
+    
+    // Базовая эффективность пылеулавливания: зависит от толщины пирога
+    const avgCakeDust = state.sections.reduce((a, s) => a + s.cakeMass, 0) / C.numSections;
+    // При нормальном пироге η > 99.995%. При тонком η ~ 99.990%. 
+    // Это обеспечивает базовую пыль ≤ 5 мг/нм³.
+    const cakeEtaDust = 0.99990 + 0.00008 * (1 - Math.exp(-avgCakeDust / 0.5));
+    
+    // Вклад порванных рукавов: каждый порванный рукав — прямой байпас
+    const tornFrac = Math.min(I.tornBags / C.totalBags, 0.25);
+    const tornPenalty = tornFrac * 0.5; // 0.5% потери η на каждый 1% порванных (линейно)
+    
+    let dustEff = (cakeEtaDust * 100) - tornPenalty * 100;
+    O.effDust = Math.max(50, Math.min(99.999, dustEff));
+    
+    // Пыль на выходе (мг/нм³)
+    let dustBase = O.normalFlow > 0
         ? (totalMassIn * (1 - O.effDust / 100) * 1e6) / O.normalFlow : 0;
+    
+    // Скачок пыли при регенерации (только если порваны рукава!)
+    // При целых фильтрах регенерация не даёт заметного скачка пыли
+    if (P.dustSpikeTicks > 0) {
+        const spikeAmplitude = I.tornBags > 0 ? (3 + I.tornBags * 0.5) : 0.2;
+        dustBase += spikeAmplitude * (P.dustSpikeTicks / 5);
+        P.dustSpikeTicks--;
+    }
+    
+    O.dustOut = Math.max(0, dustBase);
 
     // ── 11. [FIX 5+6] НАКОПЛЕНИЕ ПИРОГА НА СЕКЦИЯХ ──
     const mps = O.gasFlow > 0 ? totalMassIn / C.numSections : 0;
@@ -294,33 +336,32 @@ export function tick() {
 
     state.sections.forEach((sec, i) => {
         if (sec.isRegen) {
-            // [FIX 6] Импульсная регенерация: одноразовый сброс на первом тике
+            // Импульсная регенерация: одноразовый сброс на первом тике
             if (sec.regenTimer === sec.regenTimerMax) {
                 // Первый тик продувки — резкий удар сжатого воздуха
                 const airOk = P.receiverPressure > 0.3;
                 const blowEff = airOk ? C.pulseBlowEff : C.pulseBlowEffLow;
                 sec.cakeMass = sec.cakeMass * (1 - blowEff) + C.residualCake;
-                O.pulseFlash[i] = true; // Сигнал рендереру для визуального эффекта
+                O.pulseFlash[i] = true;
+                // [v6] Скачок пыли при регенерации
+                P.dustSpikeTicks = 5; // 0.5 сек скачок
             }
             sec.regenTimer--;
-            // Пересчёт ΔP после сброса
-            const W = sec.cakeMass; // cakeMass уже в кг/м²
+            const W = sec.cakeMass;
             sec.dp = C.baseDP + (C.cakeResistance * vf * W * (1 + I.gasHumidity * 0.01)) / 1000;
             if (sec.regenTimer <= 0) {
                 sec.isRegen = false;
                 sec.dp = Math.max(C.baseDP, sec.dp);
             }
         } else if (O.gasFlow > 0) {
-            // Накопление пирога (прирост W = (масса/сек) / площадь)
-            // mps — кг/ч. Для интерактивности симуляции ускоряем накопление в 60 раз (1 сек = 1 мин реального времени)
+            // Накопление пирога: ускоренное в 60 раз для интерактивности
             const simTimeFactor = 60;
             const deltaW = (mps * 0.1 * simTimeFactor / 3600) / sectionArea;
             sec.cakeMass += deltaW;
 
-            // [FIX 5] ΔP через скорость фильтрации и поверхностную нагрузку
-            const W = sec.cakeMass; // кг/м²
+            const W = sec.cakeMass;
             const tInSec = Math.min(I.tornBags, C.bagsPerSection) / C.bagsPerSection;
-            const tornReduction = (1 - tInSec * 0.4); // порванные рукава снижают ΔP
+            const tornReduction = (1 - tInSec * 0.4);
             sec.dp = C.baseDP + (C.cakeResistance * vf * W * tornReduction * (1 + I.gasHumidity * 0.01)) / 1000;
         }
     });
@@ -346,6 +387,9 @@ export function tick() {
             airUsedThisTick += airVol;
             P.receiverPressure -= C.airPressureDrop;
 
+            // [v6] Счётчик циклов регенерации
+            P.regenCycles.push(P.tickCount);
+
             state.alarms.push(`↻ Авто-продувка: Секция ${worstIdx + 1} (ΔP=${worstDP.toFixed(2)} кПа)`);
         }
     }
@@ -356,19 +400,38 @@ export function tick() {
     O.receiverP = P.receiverPressure;
     O.airConsumption = airUsedThisTick * 10 * 60;
 
-    // ── 14. [FIX 7] СОДЕРЖАНИЕ F В ГЛИНОЗЁМЕ ──
-    // Чистый экспоненциальный фильтр (τ ≈ 5 мин = 3000 тиков)
+    // ── 14. [v6] СОДЕРЖАНИЕ F В ГЛИНОЗЁМЕ — НАКОПИТЕЛЬНАЯ МОДЕЛЬ ──
+    // В реальности глинозём рециркулирует много раз, накапливая F.
+    // Целевое: 0.5–1.5% за несколько часов (в ускоренном времени — за минуты).
+    // Модель: F% стремится к равновесному значению, определяемому соотношением
+    // (уловленный F) / (поток свежего глинозёма, разбавляющего систему).
     const hfCaptured = hfGen * effTotal;         // кг/ч HF уловлено
     const fCaptured = hfCaptured * (19 / 20);     // кг/ч F (атомная масса F/HF)
     const totAlumina = (I.freshFeed + I.recircFeed) * 1000; // кг/ч
     if (totAlumina > 0) {
-        const instantF = (fCaptured / totAlumina) * 100; // wt%
-        // Экспоненциальное сглаживание: τ ≈ 5 мин
-        P.fContentAccum += (instantF - P.fContentAccum) * 0.003;
-        O.fContent = Math.min(C.maxFContent, Math.max(0, P.fContentAccum));
+        // Равновесное F%: рециркуляция накапливает F, свежий глинозём разбавляет.
+        // При recircFeed >> freshFeed → F% стремится к максимуму
+        // При freshFeed >> recircFeed → F% остаётся низким (разбавление)
+        const recircRatio = I.recircFeed / (I.freshFeed + 0.1); // защита от /0
+        // Равновесное: F_eq ≈ (HF_captured × recircCycles) / freshFlow
+        // Упрощённо: чем больше рецирк. → тем выше F%, но с насыщением
+        const equilibriumF = Math.min(C.maxFContent,
+            (fCaptured * recircRatio * 0.8) / (I.freshFeed * 1000 + 1) * 100);
+        // Сглаживание: τ ≈ 30 сек симуляции (ускоренных) → ~30 мин реальных
+        const tau = 0.01; // Коэфф. сглаживания на тик
+        P.fContentAccum += (equilibriumF - P.fContentAccum) * tau;
+        P.fContentAccum = Math.max(0.01, P.fContentAccum); // минимум 0.01%
+        O.fContent = Math.min(C.maxFContent, P.fContentAccum);
     } else {
         O.fContent = 0;
     }
+
+    // ── 14b. [v6] СЧЁТЧИК ЦИКЛОВ РЕГЕНЕРАЦИИ В ЧАС ──
+    // Считаем циклы за последние 600 тиков (= 60 сек реальных = ~60 мин симуляции)
+    const windowTicks = 600;
+    P.regenCycles = P.regenCycles.filter(t => P.tickCount - t < windowTicks);
+    // Нормируем к часу: 600 тиков = 1 час симуляции (при simTimeFactor=60)
+    O.regenCyclesPerHour = P.regenCycles.length;
 
     // ── 15. СТАТУС И АЛАРМЫ ──
     const bits = [];
@@ -410,7 +473,7 @@ export function forcePulseAll() {
         s.regenTimer = 20;
     });
     state.phys.receiverPressure -= config.airPressureDrop * config.numSections;
-    state.alarms.push('⚡ РУЧНАЯ ПРОДУВКА всех секций');
+    state.alarms.push('⚠ АВАРИЙНАЯ ПРОДУВКА всех секций (нештатный режим!)');
 }
 
 export function addTornBag() {
@@ -432,6 +495,7 @@ const IDEAL = {
     recircFeed: 22,
     regenSP:    1.2,
     pipesDamper: 100,
+    outdoorTemp: 20,
 };
 
 export function autoTune(changedParam) {
@@ -441,9 +505,14 @@ export function autoTune(changedParam) {
     const avgDamper = I.pipes.reduce((a, p) => a + p.damper, 0) / 4 / 100;
     const tempRatio = (I.gasTempSP + 273) / (IDEAL.gasTempSP + 273);
     const damperCompensation = avgDamper > 0.5 ? 1.0 : (1.0 + (1.0 - avgDamper) * 0.4);
+    
+    // Компенсация наружной температуры: 
+    // Зимой плотность воздуха выше, напор больше -> НА надо прикрывать.
+    const outdoorRatio = (IDEAL.outdoorTemp + 273) / (I.outdoorTemp + 273);
+    const outdoorCompensation = 1 / Math.sqrt(outdoorRatio);
 
     if (changedParam !== 'guideVane') {
-        I.guideVane = Math.round(clamp(IDEAL.guideVane * tempRatio * damperCompensation, 20, 100));
+        I.guideVane = Math.round(clamp(IDEAL.guideVane * tempRatio * damperCompensation * outdoorCompensation, 20, 100));
     }
     if (changedParam !== 'fanRPM') {
         I.fanRPM = IDEAL.fanRPM;
@@ -472,7 +541,9 @@ export function autoTune(changedParam) {
     if (changedParam !== 'regenSP') {
         const feedRatio = (I.freshFeed + I.recircFeed * C.recircEfficiency) /
                           (IDEAL.freshFeed + IDEAL.recircFeed * C.recircEfficiency);
-        I.regenSP = parseFloat(clamp(IDEAL.regenSP / Math.sqrt(feedRatio), 0.8, 1.8).toFixed(2));
+        // Чтобы сохранить нормальную частоту продувок (~60 ц/ч) при росте нагрузки,
+        // нужно позволить пирогу накапливаться толще (увеличить уставку ΔP).
+        I.regenSP = parseFloat(clamp(IDEAL.regenSP * Math.sqrt(feedRatio), 0.8, 2.5).toFixed(2));
     }
     if (!changedParam || changedParam === 'idealReset') {
         I.pipes.forEach(p => p.damper = IDEAL.pipesDamper);

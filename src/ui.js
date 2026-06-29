@@ -32,6 +32,7 @@ export function initUI(state, callbacks) {
     bind('I-recirc', 'L-recirc', 'recircFeed',  'т/ч', I);
     bind('I-regenSP','L-regenSP','regenSP',     'кПа', I);
     bind('I-timeSpeed','L-timeSpeed','timeSpeed','x', I, parseInt);
+    bind('I-outdoor', 'L-outdoor', 'outdoorTemp', '°C', I, parseInt);
 
     // Порванные рукава (числовое поле)
     const tornEl = document.getElementById('I-torn');
@@ -60,7 +61,7 @@ export function initUI(state, callbacks) {
     document.getElementById('btn-pulse')?.addEventListener('click', () => {
         callbacks.onForcePulse();
         const b = document.getElementById('btn-pulse');
-        b.textContent = '✓ OK'; setTimeout(() => b.textContent = '⚡ Продувка', 800);
+        b.textContent = '✓ OK'; setTimeout(() => b.textContent = '⚠ Авар. продувка', 800);
     });
 
     document.getElementById('btn-rupture')?.addEventListener('click', () => {
@@ -106,6 +107,7 @@ export function syncSlidersToState(state) {
     sync('I-recirc',  'L-recirc',  I.recircFeed,  'т/ч');
     sync('I-regenSP', 'L-regenSP', I.regenSP,     'кПа');
     sync('I-timeSpeed','L-timeSpeed', I.timeSpeed,'x');
+    sync('I-outdoor', 'L-outdoor', I.outdoorTemp, '°C');
 
     const tornEl = document.getElementById('I-torn');
     if (tornEl) tornEl.value = I.tornBags;
@@ -149,6 +151,7 @@ export function updateTelemetry(state, econ) {
     set('T-fContent',`${O.fContent.toFixed(2)} wt%`,  O.fContent > 2.0 ? 'caution' : '');
     set('T-contact', `${O.contactTime.toFixed(1)} с`,  O.contactTime < 1.5 ? 'warn' : (O.contactTime < 2.0 ? 'caution' : 'ok'));
     set('T-vfilt',   `${(O.filtVelocity * 100).toFixed(1)} см/с`);
+    set('T-regenCycles', `${O.regenCyclesPerHour} ц/ч`, O.regenCyclesPerHour > 70 ? 'warn' : (O.regenCyclesPerHour > 60 ? 'caution' : ''));
     set('T-draft',   `${Math.round(O.calcDraft)} Па`,  O.calcDraft > -50 ? 'warn' : (O.calcDraft > -100 ? 'caution' : 'ok'));
 
     set('T-airP',    `${O.receiverP.toFixed(2)} МПа`, O.receiverP < 0.35 ? 'warn' : (O.receiverP < 0.45 ? 'caution' : 'ok'));
