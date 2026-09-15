@@ -4,10 +4,13 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 let charts = {};
+let uiCallbacks = null;
 const TREND_SIZE = 60; // 60 точек (~60 сек при обновлении 1/сек)
 
 // ── Инициализация контролов ──
 export function initUI(state, callbacks) {
+    uiCallbacks = callbacks;
+
     // Привязка ползунков с поддержкой идеального режима
     const bind = (iid, lid, key, suf, obj, parser = parseFloat) => {
         const el = document.getElementById(iid);
@@ -72,17 +75,39 @@ export function initUI(state, callbacks) {
         setTimeout(() => b.textContent = '💥 Прорыв рукава', 1200);
     });
 
-    // ── Кнопка «Идеальная ГОУ» ──
+    // ── Кнопка «Идеальная ГОУ (Автопилот)» ──
     const idealBtn = document.getElementById('btn-ideal');
     if (idealBtn) {
         idealBtn.addEventListener('click', () => {
             state.idealMode = !state.idealMode;
             callbacks.onIdealToggle(state.idealMode);
-            idealBtn.textContent = state.idealMode ? '✨ ИДЕАЛЬНАЯ ГОУ: ВКЛ' : '✨ Идеальная ГОУ';
+            idealBtn.textContent = state.idealMode ? '✨ АВТОПИЛОТ: ВКЛЮЧЁН' : '✨ Идеальная ГОУ (Автопилот)';
             idealBtn.className = state.idealMode ? 'btn btn-ideal active' : 'btn btn-ideal';
             if (state.idealMode) syncSlidersToState(state);
         });
     }
+
+    // ── Экспресс-сценарии аномалий ──
+    document.getElementById('scen-anode')?.addEventListener('click', () => {
+        callbacks.onScenario?.('anode_effect');
+        const b = document.getElementById('scen-anode');
+        b.style.borderColor = '#f85149';
+        setTimeout(() => b.style.borderColor = '', 1500);
+    });
+
+    document.getElementById('scen-winter')?.addEventListener('click', () => {
+        callbacks.onScenario?.('winter_frost');
+        const b = document.getElementById('scen-winter');
+        b.style.borderColor = '#79c0ff';
+        setTimeout(() => b.style.borderColor = '', 1500);
+    });
+
+    document.getElementById('scen-wear')?.addEventListener('click', () => {
+        callbacks.onScenario?.('bag_wear');
+        const b = document.getElementById('scen-wear');
+        b.style.borderColor = '#d29922';
+        setTimeout(() => b.style.borderColor = '', 1500);
+    });
 }
 
 /**
@@ -184,6 +209,88 @@ export function updateTelemetry(state, econ) {
         set('E-fluorH',  `${econ.fluorLossCostH} ₽/ч`, econ.fluorLossCostH > 0 ? 'caution' : '');
         set('E-penaltyH',`${econ.penaltyCostH} ₽/ч`, econ.isPenalty ? 'warn' : 'ok');
     }
+
+    // ── Обновление советчика APM ──
+    updateAdvisorUI(state);
+}
+
+// ── Рендеринг виджета советчика APM ──
+function updateAdvisorUI(state) {
+    const adv = state.advisor;
+    if (!adv) return;
+
+    // 1. Индикатор здоровья
+    const badgeEl = document.getElementById('adv-health-badge');
+    const fillEl = document.getElementById('adv-health-fill');
+    if (badgeEl && fillEl) {
+        let cls = 'health-ok';
+        let fillCol = '#3fb950';
+        if (adv.healthIndex < 70) { cls = 'health-danger'; fillCol = '#f85149'; }
+        else if (adv.healthIndex < 90) { cls = 'health-warn'; fillCol = '#d29922'; }
+
+        badgeEl.className = 'health-badge ' + cls;
+        badgeEl.textContent = `${adv.healthIndex}% · ${adv.healthStatus}`;
+        fillEl.style.width = adv.healthIndex + '%';
+        fillEl.style.background = fillCol;
+    }
+
+    // 2. Статусы модулей
+    const updateChip = (chipId, modData) => {
+        const valEl = document.getElementById(`chip-${chipId}-val`);
+        if (!valEl || !modData) return;
+        valEl.textContent = modData.label;
+        valEl.className = `mod-chip-val mod-${modData.status}`;
+    };
+    updateChip('filter', adv.modules.filter);
+    updateChip('alumina', adv.modules.alumina);
+    updateChip('fan', adv.modules.fan);
+
+    // 3. Карточки рекомендаций
+    const container = document.getElementById('adv-recs-container');
+    if (!container) return;
+
+    if (state.idealMode) {
+        container.innerHTML = `
+            <div class="rec-card rec-eco">
+                <div class="rec-title"><span>✨ АВТОПИЛОТ СОВЕТЧИКА АКТИВЕН</span></div>
+                <div class="rec-reason">Система непрерывно поддерживает оптимальный баланс: тяга дымососа адаптирована под сезон, дозирование сорбента держит HF &lt; 0.3 мг/нм³, частота продувок нормирована (50–60 ц/ч).</div>
+                <div class="rec-effect">⚡ Экономия электроэнергии + нулевые штрафы</div>
+            </div>
+        `;
+        return;
+    }
+
+    if (!adv.recommendations || adv.recommendations.length === 0) {
+        container.innerHTML = `<div class="rec-empty">✓ Техпроцесс стабилен, все 3 контура в оптимуме</div>`;
+        return;
+    }
+
+    container.innerHTML = adv.recommendations.map(r => `
+        <div class="rec-card rec-${r.type}">
+            <div class="rec-title">
+                <span>💡 ${r.title}</span>
+            </div>
+            <div class="rec-reason">${r.reason}</div>
+            <div class="rec-effect">⚡ ${r.effectText}</div>
+            <div class="rec-btn-row">
+                <span style="font-size:8px; color:#8b949e;">${r.actionText}</span>
+                <button class="btn-apply-rec" data-rec-id="${r.id}">Применить</button>
+            </div>
+        </div>
+    `).join('');
+
+    // Привязка обработчиков на кнопки «Применить»
+    container.querySelectorAll('.btn-apply-rec').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const recId = e.target.getAttribute('data-rec-id');
+            if (uiCallbacks && uiCallbacks.onApplyRec) {
+                uiCallbacks.onApplyRec(recId);
+                btn.textContent = '✓ ПРИНЯТО';
+                btn.style.background = '#1f6feb';
+                btn.style.borderColor = '#58a6ff';
+            }
+        });
+    });
 }
 
 // ── Chart.js тренды ──

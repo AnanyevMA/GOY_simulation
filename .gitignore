@@ -1,0 +1,10 @@
+# IDE & Editors
+.idea/
+.vscode/
+
+# Logs & temp files
+*.log
+scratch/
+
+# Notes
+talk.txt

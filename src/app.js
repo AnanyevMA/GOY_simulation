@@ -4,7 +4,7 @@
 //  Физика: 10 тиков/сек. Рендер: 60 FPS. Тренды: 1/сек.
 // ═══════════════════════════════════════════════════════════════════════
 
-import { state, config, tick, forcePulseAll, addTornBag, setIdealMode, autoTune } from './model.js';
+import { state, config, tick, forcePulseAll, addTornBag, setIdealMode, autoTune, triggerScenario, applyRecommendation } from './model.js';
 import { initRenderer, render, burstDust } from './renderer.js';
 import { initUI, updateTelemetry, initCharts, updateCharts, processAlarms, syncSlidersToState } from './ui.js';
 import { calcEconomics } from './economics.js';
@@ -20,6 +20,14 @@ document.addEventListener('DOMContentLoaded', () => {
         onForcePulse: () => forcePulseAll(),
         onBagRupture: () => { addTornBag(); burstDust(); },
         onIdealToggle: (on) => setIdealMode(on),
+        onScenario: (name) => {
+            triggerScenario(name);
+            syncSlidersToState(state);
+        },
+        onApplyRec: (recId) => {
+            applyRecommendation(recId);
+            syncSlidersToState(state);
+        },
         // При изменении любого параметра в идеальном режиме → пересчёт
         onParamChange: (paramName) => {
             if (state.idealMode) {

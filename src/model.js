@@ -31,7 +31,7 @@ export const config = {
     recircEfficiency: 0.40,      // Эффективность рецирк. Al₂O₃ (40% от свежего)
     maxFContent:     2.5,        // Макс. содержание F (wt%)
     reactorVolume:   120,        // Объём реактора (м³)
-    optimalContactTime: 2.5,     // Оптимальное время контакта (сек)
+    optimalContactTime: 1.2,     // Оптимальное время контакта (сек)
 
     // Газоходы (Дарси-Вейсбах)
     ductLength:      200,        // Длина газоходов (м)
@@ -98,6 +98,20 @@ export const state = {
         networkK:       8e-12,   // Удельное сопротивление сети (кПа·ч²/м⁶) ~0.7кПа/(300000)²
         regenCycles:    [],      // Таймстампы циклов регенерации для подсчёта ц/ч
         dustSpikeTicks: 0,       // Тики оставшегося скачка пыли при регенерации
+        anodeEffectTimer: 0,     // Таймер анодного эффекта (тики)
+    },
+
+    // ── Предиктивный советчик (APM v7.0) ──
+    advisor: {
+        healthIndex:  100,       // 0 - 100%
+        healthStatus: 'ОТЛИЧНО', // 'ОТЛИЧНО' | 'ВНИМАНИЕ' | 'ТРЕВОГА'
+        modules: {
+            filter:  { status: 'ok', label: 'В НОРМЕ', desc: 'Рукава целы, ΔP стабилен' },
+            alumina: { status: 'ok', label: 'В НОРМЕ', desc: 'HF улавливается, F% в норме' },
+            fan:     { status: 'ok', label: 'В НОРМЕ', desc: 'Тяга и ток согласованы' },
+        },
+        recommendations: [],     // Активные карточки рекомендаций
+        activeScenario: null,   // Имя активного демо-сценария
     },
 
     // Выходные параметры (рассчитываются каждый тик)
@@ -164,7 +178,13 @@ export function tick() {
     // При скорости ~10-15 м/с потери составляют около 5-15°C в зависимости от сезона.
     const velocityFactor = O.gasVelocity > 0 ? (15 / Math.max(O.gasVelocity, 2)) : 1;
     const coolingFactor = 0.05 * velocityFactor; // Доля потери разницы температур
-    const targetTemp = I.gasTempSP - coolingFactor * (I.gasTempSP - I.outdoorTemp);
+    let targetTemp = I.gasTempSP - coolingFactor * (I.gasTempSP - I.outdoorTemp);
+
+    // [v7] Анодный эффект — резкий локальный перегрев от электролизеров (+50°C)
+    if (P.anodeEffectTimer > 0) {
+        const surgeRatio = P.anodeEffectTimer / 200;
+        targetTemp += surgeRatio * 50;
+    }
 
     // T_actual += (T_target - T_actual) × k × dt
     P.actualTemp += (targetTemp - P.actualTemp) * C.thermalK;
@@ -255,8 +275,20 @@ export function tick() {
 
     // ── 8. [FIX 4] ГЕНЕРАЦИЯ ЗАГРЯЗНИТЕЛЕЙ — зависит от T ──
     // При анодных эффектах (T > 140°C) генерация HF возрастает до 4×
-    const hfTempFactor = T > 140 ? 1 + (T - 140) * 0.05 : 1.0;
-    const hfGen = C.hfGenFactor * C.potroomCurrent * Math.min(4, hfTempFactor);
+    let hfTempFactor = T > 140 ? 1 + (T - 140) * 0.05 : 1.0;
+
+    // [v7] Прямой импульс HF при активном анодном эффекте
+    if (P.anodeEffectTimer > 0) {
+        const surgeRatio = P.anodeEffectTimer / 200;
+        hfTempFactor += surgeRatio * 2.5; // Выброс фторидов в 3.5 раза выше
+        P.anodeEffectTimer--;
+        if (P.anodeEffectTimer === 0 && state.advisor.activeScenario === 'anode_effect') {
+            state.advisor.activeScenario = null;
+            state.alarms.push('✓ Анодный эффект на серии завершился');
+        }
+    }
+
+    const hfGen = C.hfGenFactor * C.potroomCurrent * Math.min(4.5, hfTempFactor);
     const dustGen = C.dustGenFactor * C.potroomCurrent;
     O.hfGenKgH = hfGen;
     O.hfIn = O.normalFlow > 0 ? (hfGen * 1e6) / O.normalFlow : 0;
@@ -277,7 +309,7 @@ export function tick() {
 
     // η₁ — Реактор (свежий + рецирк × 0.4)
     const effAlumina = I.freshFeed * 1.0 + I.recircFeed * C.recircEfficiency;
-    const rRatio = hfGen > 0 ? effAlumina / hfGen : 0;
+    const rRatio = hfGen > 0 ? (effAlumina * 1000 / hfGen) / 50 : 0;
     let eta1 = C.maxReactorEff * (1 - Math.exp(-C.reactorK * rRatio)) * tempPenalty * contactF * humBonus;
     eta1 = Math.max(0, Math.min(C.maxReactorEff, eta1));
 
@@ -462,6 +494,14 @@ export function tick() {
 
     // Вращение лопастей дымососа
     P.fanAngle += n * alpha * 0.4;
+
+    // ── 16. [v7] ПРЕДИКТИВНАЯ ДИАГНОСТИКА И СОВЕТЧИК (APM) ──
+    runPredictiveDiagnostics();
+
+    // Если активен режим «Идеальная ГОУ» (Автопилот советчика) — непрерывно подстраиваем
+    if (state.idealMode) {
+        autoTune(null);
+    }
 }
 
 // ── Управляющие функции (вызываются из UI) ──
@@ -557,8 +597,248 @@ export function setIdealMode(on) {
     state.idealMode = on;
     if (on) {
         autoTune(null);
-        state.alarms.push('✨ Режим «ИДЕАЛЬНАЯ ГОУ» включён');
+        state.alarms.push('✨ АВТОПИЛОТ СОВЕТЧИКА: ВКЛЮЧЁН (все контуры оптимизированы)');
     } else {
-        state.alarms.push('⏹ Режим «ИДЕАЛЬНАЯ ГОУ» выключен');
+        state.alarms.push('⏹ АВТОПИЛОТ СОВЕТЧИКА: ВЫКЛЮЧЕН (ручной режим оператора)');
     }
 }
+
+// ══════════════════════════════════════════════════════════════════════
+//  [v7] ДВИЖОК ПРЕДИКТИВНОЙ АНАЛИТИКИ (APM ADVISOR)
+// ══════════════════════════════════════════════════════════════════════
+
+export function runPredictiveDiagnostics() {
+    const I = state.inputs;
+    const O = state.out;
+    const P = state.phys;
+    const adv = state.advisor;
+
+    let score = 100;
+    const recs = [];
+
+    // ── 1. ДИАГНОСТИКА: РУКАВА И РЕГЕНЕРАЦИЯ ──
+    let filterStatus = 'ok';
+    let filterLabel = 'В НОРМЕ';
+    let filterDesc = 'Рукава герметичны, перепад ΔP в норме';
+
+    if (I.tornBags > 0) {
+        const severity = I.tornBags > 5 ? 'danger' : 'warn';
+        filterStatus = severity;
+        filterLabel = I.tornBags > 5 ? 'АВАРИЯ' : 'ПОРЫВ РУКАВОВ';
+        filterDesc = `Обнаружено ${I.tornBags} повреждённых рукавов. Проскок пыли: ${O.dustOut.toFixed(1)} мг/нм³`;
+        score -= Math.min(40, I.tornBags * 8);
+
+        recs.push({
+            id: 'fix_torn_bags',
+            module: 'filter',
+            type: 'danger',
+            title: `Разгерметизация фильтра (${I.tornBags} рук.)`,
+            reason: `Выброс пыли вырос до ${O.dustOut.toFixed(1)} мг/нм³. Превышение норматива грозит экологическим штрафом и износом колеса дымососа.`,
+            actionText: 'Изолировать секцию и заменить рукава',
+            effectText: 'Снижение пыли до ≤5 мг/нм³, штраф 0 ₽',
+            apply: () => {
+                I.tornBags = 0;
+                state.alarms.push('✓ Советчик: повреждённые рукава заменены');
+            }
+        });
+    } else if (O.regenCyclesPerHour > 65) {
+        filterStatus = 'warn';
+        filterLabel = 'ЧАСТАЯ ПРОДУВКА';
+        filterDesc = `Частота регенерации ${O.regenCyclesPerHour} ц/ч (норма 50–60). Повышенный износ ткани`;
+        score -= 10;
+
+        const optimalRegenSP = parseFloat(Math.min(2.0, I.regenSP + 0.15).toFixed(2));
+        recs.push({
+            id: 'opt_regen_freq',
+            module: 'filter',
+            type: 'warn',
+            title: `Слишком частая регенерация (${O.regenCyclesPerHour} ц/ч)`,
+            reason: `Импульсы срабатывают слишком часто. Это ведёт к перерасходу сжатого воздуха и истиранию фильтровального полотна.`,
+            actionText: `Увеличить уставку ΔP до ${optimalRegenSP} кПа`,
+            effectText: 'Возврат к норме 50–60 ц/ч, продление ресурса ткани на 30%',
+            apply: () => {
+                I.regenSP = optimalRegenSP;
+                state.alarms.push(`✓ Советчик: уставка ΔP скорректирована до ${optimalRegenSP} кПа`);
+            }
+        });
+    } else if (P.receiverPressure < 0.40) {
+        filterStatus = 'warn';
+        filterLabel = 'НИЗКОЕ ДАВЛЕНИЕ';
+        filterDesc = `Давление в ресивере ${P.receiverPressure.toFixed(2)} МПа. Риск неполного сброса пирога`;
+        score -= 10;
+    }
+
+    adv.modules.filter = { status: filterStatus, label: filterLabel, desc: filterDesc };
+
+    // ── 2. ДИАГНОСТИКА: ГЛИНОЗЁМ И HF (ФТОР-БАЛАНС) ──
+    let aluminaStatus = 'ok';
+    let aluminaLabel = 'В НОРМЕ';
+    let aluminaDesc = 'Сорбция HF эффективна, баланс сорбента оптимален';
+
+    if (O.hfOut > 0.5) {
+        const severity = O.hfOut > 1.0 ? 'danger' : 'warn';
+        aluminaStatus = severity;
+        aluminaLabel = O.hfOut > 1.0 ? 'ПРОСКОК HF' : 'РИСК ПДК';
+        aluminaDesc = `HF на выходе ${O.hfOut.toFixed(2)} мг/нм³ превышает ПДК (0.5 мг/нм³)`;
+        score -= Math.min(45, (O.hfOut - 0.5) * 40 + 20);
+
+        const neededFresh = parseFloat(Math.min(10.0, I.freshFeed + (O.hfOut > 1.0 ? 2.0 : 1.0)).toFixed(1));
+        const neededRecirc = parseFloat(Math.min(40.0, neededFresh * 4).toFixed(1));
+        recs.push({
+            id: 'prevent_hf_slip',
+            module: 'alumina',
+            type: 'danger',
+            title: `Превышение ПДК по фтористому водороду (${O.hfOut.toFixed(2)} мг/нм³)`,
+            reason: `Недостаточная емкость глинозёма при текущей генерации HF. Риск экологических санкций (до 5000 ₽/ч).`,
+            actionText: `Увеличить подачу: свежий ${neededFresh} т/ч, рецирк ${neededRecirc} т/ч`,
+            effectText: 'Снижение HF на выходе ниже 0.3 мг/нм³, отмена штрафов',
+            apply: () => {
+                I.freshFeed = neededFresh;
+                I.recircFeed = neededRecirc;
+                state.alarms.push(`✓ Советчик: подача сорбента увеличена до ${neededFresh}/${neededRecirc} т/ч`);
+            }
+        });
+    } else if (O.fContent < 0.9 && I.freshFeed > 3.0 && P.tickCount > 100) {
+        aluminaStatus = 'warn';
+        aluminaLabel = 'БЕДНЫЙ ГЛИНОЗЁМ';
+        aluminaDesc = `Насыщение глинозёма ${O.fContent.toFixed(2)} wt% F (цель: 1.2–2.0%). Недоиспользование сорбента`;
+        score -= 8;
+
+        const optRecirc = parseFloat(Math.min(40.0, I.freshFeed * 4.5).toFixed(1));
+        recs.push({
+            id: 'opt_f_saturation',
+            module: 'alumina',
+            type: 'warn',
+            title: `Низкое насыщение глинозёма фтором (${O.fContent.toFixed(2)} wt%)`,
+            reason: `Слишком много свежего сорбента сбрасывается обратно в электролиз без глубокого насыщения.`,
+            actionText: `Увеличить кратность рециркуляции до ${optRecirc} т/ч`,
+            effectText: 'Рост насыщения до 1.4–1.8 wt% F, экономия свежего глинозёма',
+            apply: () => {
+                I.recircFeed = optRecirc;
+                state.alarms.push(`✓ Советчик: рециркуляция увеличена до ${optRecirc} т/ч для насыщения F`);
+            }
+        });
+    }
+
+    adv.modules.alumina = { status: aluminaStatus, label: aluminaLabel, desc: aluminaDesc };
+
+    // ── 3. ДИАГНОСТИКА: ДЫМОСОС, РАЗРЕЖЕНИЕ И СЕЗОННОСТЬ ──
+    let fanStatus = 'ok';
+    let fanLabel = 'В НОРМЕ';
+    let fanDesc = 'Разрежение стабильно, режим дымососа энергоэффективен';
+
+    if (O.calcDraft > -60) {
+        fanStatus = 'danger';
+        fanLabel = 'ВЫБИВАНИЕ';
+        fanDesc = `Критически слабое разрежение: ${Math.round(O.calcDraft)} Па (норма -150 Па). Загазованность цеха!`;
+        score -= 30;
+
+        const neededVane = Math.min(100, Math.round(I.guideVane + 15));
+        recs.push({
+            id: 'prevent_gas_escape',
+            module: 'fan',
+            type: 'danger',
+            title: `Опасность загазованности цеха (тяга ${Math.round(O.calcDraft)} Па)`,
+            reason: `Тяги дымососа недостаточно для эвакуации газов от электролизеров. Газ выходит в атмосферу корпуса.`,
+            actionText: `Приоткрыть НА дымососа до ${neededVane}%`,
+            effectText: 'Восстановление разрежения до -150 Па, безопасная атмосфера в цехе',
+            apply: () => {
+                I.guideVane = neededVane;
+                state.alarms.push(`✓ Советчик: НА открыт до ${neededVane}% для ликвидации выбивания`);
+            }
+        });
+    } else if (I.outdoorTemp <= -10 && I.guideVane > 65) {
+        // [Рекомендация эксперта из talk.txt]: Зимой воздух плотный, НА можно поджать
+        const optVane = Math.max(45, Math.round(I.guideVane - 12));
+        const savedKW = Math.round(O.fanPowerKW * 0.14);
+        const savedRubDay = Math.round(savedKW * 3.5 * 24);
+
+        fanStatus = 'warn';
+        fanLabel = 'ЗИМНИЙ РАСХОД';
+        fanDesc = `Тнар = ${I.outdoorTemp}°C. Высокая плотность воздуха, резерв экономии: ~${savedKW} кВт`;
+        score -= 10;
+
+        recs.push({
+            id: 'winter_energy_saving',
+            module: 'fan',
+            type: 'eco',
+            title: `Зимний резерв энергосбережения (${I.outdoorTemp}°C)`,
+            reason: `Плотный морозный воздух создаёт избыточный напор. Поджатие НА сохранит разрежение и сбережет киловатты.`,
+            actionText: `Поджать НА с ${I.guideVane}% до ${optVane}%`,
+            effectText: `Экономия ~${savedKW} кВт (~${savedRubDay.toLocaleString('ru-RU')} ₽/сутки, до 1 млн ₽/мес)`,
+            apply: () => {
+                I.guideVane = optVane;
+                state.alarms.push(`✓ Советчик: НА поджат до ${optVane}% (зимняя оптимизация, экономия ${savedKW} кВт)`);
+            }
+        });
+    } else if (O.calcDraft < -280 && I.guideVane > 85) {
+        fanStatus = 'warn';
+        fanLabel = 'ИЗБЫТОЧНАЯ ТЯГА';
+        fanDesc = `Разрежение ${Math.round(O.calcDraft)} Па избыточно. Перерасход энергии на подсосах`;
+        score -= 8;
+
+        const optVane = 76;
+        recs.push({
+            id: 'over_draft_saving',
+            module: 'fan',
+            type: 'eco',
+            title: `Избыточная тяга дымососа (${Math.round(O.calcDraft)} Па)`,
+            reason: `Чрезмерное разрежение охлаждает электролизеры подсосами и ведёт к лишнему расходу электроэнергии.`,
+            actionText: `Установить НА на оптимум (${optVane}%)`,
+            effectText: 'Снижение нагрузки на двигатель, нормализация разрежения до -160 Па',
+            apply: () => {
+                I.guideVane = optVane;
+                state.alarms.push(`✓ Советчик: НА установлен на ${optVane}%`);
+            }
+        });
+    }
+
+    adv.modules.fan = { status: fanStatus, label: fanLabel, desc: fanDesc };
+
+    // ── ИТОГОВЫЙ HEALTH INDEX ──
+    score = Math.max(10, Math.min(100, Math.round(score)));
+    adv.healthIndex = score;
+    if (score >= 90) adv.healthStatus = 'ОТЛИЧНО';
+    else if (score >= 70) adv.healthStatus = 'ВНИМАНИЕ';
+    else adv.healthStatus = 'ТРЕВОГА';
+
+    adv.recommendations = recs;
+}
+
+// ── Запуск экспресс-сценариев ──
+export function triggerScenario(name) {
+    const I = state.inputs;
+    const P = state.phys;
+    const adv = state.advisor;
+
+    if (name === 'anode_effect') {
+        P.anodeEffectTimer = 200; // 20 сек симуляции
+        adv.activeScenario = 'anode_effect';
+        state.alarms.push('🔥 ДЕМО-СЦЕНАРИЙ: Анодный эффект на серии электролизеров (+50°C, 3.5× HF)!');
+    } else if (name === 'winter_frost') {
+        I.outdoorTemp = -30;
+        adv.activeScenario = 'winter_frost';
+        state.alarms.push('❄ ДЕМО-СЦЕНАРИЙ: Зимний мороз -30°C (резкий рост плотности воздуха и тока дымососа)!');
+    } else if (name === 'bag_wear') {
+        I.tornBags = Math.max(3, I.tornBags + 3);
+        adv.activeScenario = 'bag_wear';
+        state.alarms.push('🔍 ДЕМО-СЦЕНАРИЙ: Скрытый порыв 3 рукавов (микроскачки пыли при регенерации)!');
+    }
+}
+
+// ── Применение рекомендаций советчика ──
+export function applyRecommendation(recId) {
+    const adv = state.advisor;
+    if (recId === 'all') {
+        adv.recommendations.forEach(r => {
+            if (typeof r.apply === 'function') r.apply();
+        });
+        adv.recommendations = [];
+    } else {
+        const r = adv.recommendations.find(item => item.id === recId);
+        if (r && typeof r.apply === 'function') {
+            r.apply();
+        }
+    }
+}
+

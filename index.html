@@ -143,10 +143,65 @@
             box-shadow: 0 0 15px rgba(251, 191, 36, 0.25), inset 0 0 20px rgba(251, 191, 36, 0.05);
             animation: idealPulse 2s infinite;
         }
-        @keyframes idealPulse {
-            0%, 100% { box-shadow: 0 0 10px rgba(251,191,36,0.2); }
-            50% { box-shadow: 0 0 20px rgba(251,191,36,0.4); }
+        /* ── Экспресс-сценарии аномалий ── */
+        .scenarios-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-top: 4px; }
+        .btn-scen {
+            padding: 5px 3px; font-size: 8px; font-weight: 700; border-radius: 4px;
+            cursor: pointer; text-transform: uppercase; border: 1px solid #30363d;
+            background: #161b22; color: #c9d1d9; transition: all 0.2s;
+            text-align: center;
         }
+        .btn-scen:hover { border-color: #58a6ff; color: #fff; background: #21262d; }
+        .btn-scen.btn-fire:hover { border-color: #f85149; color: #f85149; }
+        .btn-scen.btn-cold:hover { border-color: #79c0ff; color: #79c0ff; }
+        .btn-scen.btn-wear:hover { border-color: #d29922; color: #d29922; }
+
+        /* ── Советчик APM ── */
+        .advisor-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .health-badge {
+            font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 10px;
+            font-family: 'Consolas', monospace; display: flex; align-items: center; gap: 4px;
+        }
+        .health-ok { background: rgba(63, 185, 80, 0.15); color: #3fb950; border: 1px solid #3fb950; }
+        .health-warn { background: rgba(210, 153, 34, 0.15); color: #d29922; border: 1px solid #d29922; }
+        .health-danger { background: rgba(248, 81, 73, 0.15); color: #f85149; border: 1px solid #f85149; animation: blink 1s infinite; }
+
+        .health-bar-wrap { width: 100%; height: 5px; background: #21262d; border-radius: 3px; overflow: hidden; margin-bottom: 7px; }
+        .health-bar-fill { height: 100%; width: 100%; transition: width 0.3s, background 0.3s; }
+
+        .module-chips { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-bottom: 7px; }
+        .mod-chip {
+            background: #161b22; border: 1px solid #21262d; border-radius: 4px; padding: 4px 2px;
+            text-align: center; font-size: 8px; font-family: monospace;
+        }
+        .mod-chip-title { color: #8b949e; font-size: 7px; margin-bottom: 2px; }
+        .mod-chip-val { font-weight: 700; font-size: 8px; }
+        .mod-ok { color: #3fb950; }
+        .mod-warn { color: #d29922; }
+        .mod-danger { color: #f85149; }
+
+        .recs-container { display: flex; flex-direction: column; gap: 5px; max-height: 190px; overflow-y: auto; }
+        .recs-container::-webkit-scrollbar { width: 3px; }
+        .recs-container::-webkit-scrollbar-thumb { background: #30363d; }
+        .rec-card {
+            background: #161b22; border-left: 3px solid #58a6ff; border-radius: 0 4px 4px 0;
+            padding: 5px 7px; display: flex; flex-direction: column; gap: 2px;
+        }
+        .rec-card.rec-danger { border-left-color: #f85149; background: rgba(248, 81, 73, 0.06); }
+        .rec-card.rec-warn { border-left-color: #d29922; background: rgba(210, 153, 34, 0.06); }
+        .rec-card.rec-eco { border-left-color: #3fb950; background: rgba(63, 185, 80, 0.06); }
+
+        .rec-title { font-size: 10px; font-weight: 700; color: #c9d1d9; }
+        .rec-reason { font-size: 9px; color: #8b949e; line-height: 1.2; }
+        .rec-effect { font-size: 8px; color: #3fb950; font-family: monospace; font-weight: 700; margin-top: 1px; }
+        .rec-btn-row { display: flex; justify-content: space-between; align-items: center; margin-top: 3px; }
+        .btn-apply-rec {
+            background: #238636; border: 1px solid #2ea043; color: #fff; font-size: 8px;
+            font-weight: 700; padding: 3px 8px; border-radius: 3px; cursor: pointer; text-transform: uppercase;
+            transition: all 0.15s;
+        }
+        .btn-apply-rec:hover { background: #2ea043; box-shadow: 0 0 6px rgba(46,160,67,0.4); }
+        .rec-empty { font-size: 9px; color: #3fb950; text-align: center; padding: 8px 0; font-style: italic; }
     </style>
 </head>
 <body>
@@ -159,7 +214,17 @@
     <div class="panel-header">АСУ ТП · СГОУ</div>
 
     <!-- ─── ИДЕАЛЬНАЯ ГОУ ─── -->
-    <button class="btn btn-ideal" id="btn-ideal">✨ Идеальная ГОУ</button>
+    <button class="btn btn-ideal" id="btn-ideal">✨ Идеальная ГОУ (Автопилот)</button>
+
+    <!-- ─── ДЕМО-СЦЕНАРИИ АНОМАЛИЙ ─── -->
+    <div class="box">
+        <div class="box-title">🎯 Экспресс-сценарии аномалий</div>
+        <div class="scenarios-grid">
+            <button class="btn-scen btn-fire" id="scen-anode">🔥 Анод-эффект</button>
+            <button class="btn-scen btn-cold" id="scen-winter">❄ Мороз -30°C</button>
+            <button class="btn-scen btn-wear" id="scen-wear">🔍 Износ рукавов</button>
+        </div>
+    </div>
 
     <!-- ─── ТЕЛЕМЕТРИЯ ─── -->
     <div class="box">
@@ -251,6 +316,36 @@
         </div>
     </div>
 
+    <!-- ─── СОВЕТЧИК ОПЕРАТОРА И ПРЕДИКТИВКА (APM v7.0) ─── -->
+    <div class="box" id="advisor-box">
+        <div class="advisor-header">
+            <span class="box-title" style="margin-bottom:0; border:none; color:#58a6ff;">🧠 Советчик APM</span>
+            <span id="adv-health-badge" class="health-badge health-ok">100% · ОТЛИЧНО</span>
+        </div>
+        <div class="health-bar-wrap">
+            <div id="adv-health-fill" class="health-bar-fill" style="background:#3fb950; width:100%;"></div>
+        </div>
+
+        <div class="module-chips">
+            <div class="mod-chip" id="chip-filter">
+                <div class="mod-chip-title">Фильтр / Рукава</div>
+                <div class="mod-chip-val mod-ok" id="chip-filter-val">В НОРМЕ</div>
+            </div>
+            <div class="mod-chip" id="chip-alumina">
+                <div class="mod-chip-title">Глинозём / HF</div>
+                <div class="mod-chip-val mod-ok" id="chip-alumina-val">В НОРМЕ</div>
+            </div>
+            <div class="mod-chip" id="chip-fan">
+                <div class="mod-chip-title">Дымосос / Сезон</div>
+                <div class="mod-chip-val mod-ok" id="chip-fan-val">В НОРМЕ</div>
+            </div>
+        </div>
+
+        <div class="recs-container" id="adv-recs-container">
+            <div class="rec-empty">✓ Техпроцесс стабилен, отклонений не выявлено</div>
+        </div>
+    </div>
+
     <!-- ─── ТРЕНДЫ (Chart.js) ─── -->
     <div class="box">
         <div class="box-title">Тренды</div>
@@ -276,7 +371,7 @@
         <div class="alarm-box" id="alarm-log"><div class="alarm-entry" style="color:#3fb950;">[System] Симулятор запущен</div></div>
     </div>
 
-    <div class="footer">Antigravity Digital Twin v6.0 · ES6 модули · НДТ · см. README.md</div>
+    <div class="footer">Antigravity Digital Twin v7.0 · APM Советчик · ES6 модули · НДТ · см. README.md</div>
 </div>
 
 <!-- ═══════ ES6 МОДУЛИ ═══════ -->
