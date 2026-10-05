@@ -21,12 +21,14 @@ const counters = {
 };
 
 /**
- * Рассчитывает экономические показатели за один тик (100 мс)
+ * Рассчитывает экономические показатели и интегрирует счётчики за интервал вызова
  * @param {object} out — state.out из model.js
+ * @param {number} simHours — прошедшее МОДЕЛЬНОЕ время с прошлого вызова, ч
+ *        (1 тик = 6 с модельного времени → при 10 тик/с и ×1 это 1/60 ч за 1 с реального)
  * @returns {object} — экономические показатели
  */
-export function calcEconomics(out) {
-    const tickHours = 1 / 36000; // 100 мс = 1/36000 часа
+export function calcEconomics(out, simHours = 1 / 60) {
+    const tickHours = simHours;
     counters.ticksSinceReset++;
 
     // 1. Электроэнергия

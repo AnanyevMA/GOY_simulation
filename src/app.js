@@ -52,7 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── Обновление телеметрии и трендов (1 Гц) ──
     setInterval(() => {
         const speed = state.inputs.timeSpeed || 1;
-        const econ = calcEconomics(state.out);
+        const econ = calcEconomics(state.out, speed / 60);
         updateTelemetry(state, econ);
         updateCharts(state);
     }, 1000);

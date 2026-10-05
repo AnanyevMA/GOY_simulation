@@ -1,7 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════════
-//  ANTIGRAVITY СГОУ — ФИЗИЧЕСКИЙ ДВИЖОК v6.0
-//  v6: динамическая пыль, накопление F%, плотность→ток, Т наружного,
-//  счётчик циклов регенерации, корректный масштаб пыли.
+//  ANTIGRAVITY СГОУ — ФИЗИЧЕСКИЙ ДВИЖОК v7.1
+//  v7.1: точная рабочая точка «дымосос ∩ сеть», шиберы как параллельные ветви,
+//  разрежение из расхода, порывы рукавов → пыль и HF, баланс F по массе,
+//  регенерация 50–60 ц/ч, ток из мощности (дымосос 1.6 МВт), автопилот без «читов».
 // ═══════════════════════════════════════════════════════════════════════
 
 // ── Конфигурация установки (константы) ──
@@ -10,46 +11,64 @@ export const config = {
     bagsPerSection:  200,
     numSections:     4,
     ductArea:        8.0,        // Сечение газохода (м²)
-    nominalFlow:     350000,     // Номинальный расход (нм³/ч)
-    maxFanPressure:  4.5,        // Макс. напор дымососа при 100% (кПа)
-    fanMaxAmps:      350,        // Ном. ток (А)
+    numPipes:        4,
+
+    // Дымосос (расчётная точка: свободная подача при 100% НА, нормальные условия при T_расч)
+    nominalFlow:     500000,     // Q_max дымососа при n=100%, α=100% (нм³/ч, приведён к T_расч)
+    maxFanPressure:  11.5,       // Напор при нулевом расходе, n=100%, α=100% (кПа)
+    refTemp:         105,        // Расчётная T газа (°C)
+    refFlow:         220000,     // Проектный нормальный расход (нм³/ч) — опора для ΔP и разрежения
+    falseAirFrac:    0.18,       // Доля подсасываемого наружного воздуха на всасе дымососа
     fanVoltage:      6.0,        // Напряжение (кВ)
     fanCosF:         0.85,       // cosφ двигателя
     fanEfficiency:   0.75,       // КПД дымососа
+    motorEfficiency: 0.95,       // КПД электродвигателя
+    fanRatedKW:      1600,       // Номинальная мощность двигателя (кВт) — по данным эксперта
+    fanMaxAmps:      190,        // Ном. ток двигателя (А) = 1600 кВт / (√3·6 кВ·0.85·0.95)
     baseDP:          0.45,       // ΔP чистого фильтра (кПа)
     potroomCurrent:  300,        // Ток серии (кА)
 
     // Генерация загрязнителей
-    hfGenFactor:     0.03,       // кг HF / кА·ч  → 9 кг/ч при 300 кА
+    hfGenFactor:     0.135,      // кг HF / кА·ч  → 40.5 кг/ч при 300 кА (≈180 мг/нм³ на входе)
     dustGenFactor:   0.08,       // кг пыли / кА·ч → 24 кг/ч при 300 кА
 
     // Адсорбция
     maxReactorEff:   0.70,       // Макс. η₁ реактора
-    maxCakeEff:      0.995,      // Макс. η₂ пирога
-    reactorK:        0.12,       // Константа Лэнгмюра для реактора
+    maxCakeEff:      0.997,      // Макс. η₂ пирога
+    reactorK:        0.0085,     // Константа Лэнгмюра: η₁ ∝ 1−e^(−K·кг сорбента/кг HF)
     cakeK:           3.5,        // Константа filsorption
     recircEfficiency: 0.40,      // Эффективность рецирк. Al₂O₃ (40% от свежего)
     maxFContent:     2.5,        // Макс. содержание F (wt%)
-    reactorVolume:   120,        // Объём реактора (м³)
-    optimalContactTime: 1.2,     // Оптимальное время контакта (сек)
+    circulatingInventory: 30,    // Запас глинозёма в контуре рециркуляции (т)
+    reactorVolume:   200,        // Объём реактора (м³)
+    optimalContactTime: 1.2,     // Постоянная времени контакта (сек)
 
-    // Газоходы (Дарси-Вейсбах)
+    // Порванные рукава
+    tornGasBypass:   0.5,        // Доля газа через порванный рукав, не контактирующая с пирогом
+    tornDustLeak:    0.02,       // Доля пыли, проскакивающая через порыв (остальное оседает у дыры)
+
+    // Газоходы и сеть (Дарси-Вейсбах + местные сопротивления при refFlow)
     ductLength:      200,        // Длина газоходов (м)
     ductDiameter:    3.2,        // Эквивалентный диаметр (м)
     ductFriction:    0.02,       // Коэфф. трения λ
-    reactorDP:       0.15,       // ΔP реактора (кПа, const)
+    reactorDP:       0.35,       // ΔP реактора (кПа при refFlow, ∝ Q²)
+    pipeDP:          0.30,       // ΔP 4 труб с открытыми шиберами (кПа при refFlow, ∝ Q²)
+    otherDP:         2.6,        // ΔP дымовой трубы, короба, выходного тракта (кПа при refFlow)
 
     // Фильтр
     filterArea:      5000,       // Общая площадь фильтрации (м²)
     cakeResistance:  8000,       // Коэфф. сопротивления пирога (Па·с/кг·м)
     residualCake:    1.0,        // Остаточная масса пирога после продувки (кг/м²)
-    pulseBlowEff:    0.80,       // Доля пирога, сбитого при нормальной продувке
-    pulseBlowEffLow: 0.40,      // То же при низком давлении воздуха
+    pulseBlowEff:    0.085,      // Доля пирога (сверх остаточного), сбиваемая одним импульсом
+    regenCooldownTicks: 5,       // Пауза между импульсами соседних секций (тиков)
+
+    // Время
+    simTimeFactor:   60,         // Ускорение процессов накопления: 1 тик = 6 с модельного времени
 
     // Сжатый воздух
-    pulseVolume:     0.05,       // м³ воздуха на 1 рукав за импульс
+    pulseVolume:     0.05,       // нм³ воздуха на 1 рукав за импульс
     airPressureNom:  0.60,       // Номинальное давление в ресивере (МПа)
-    airRecoveryRate: 0.005,      // Скорость восстановления давления (МПа/тик)
+    airRecoveryRate: 0.0012,     // Производительность компрессора (МПа/тик)
     airPressureDrop: 0.008,      // Падение давления за продувку 1 секции (МПа)
 
     // Тепловая инерция
@@ -64,7 +83,7 @@ export const state = {
         guideVane:   80,      // % открытия НА (5–100) — ОСНОВНОЙ регулятор
         gasTempSP:   110,     // Уставка температуры газа (°C)
         gasHumidity: 5,       // Влажность (%)
-        inletDraft:  -150,    // Смещение разрежения (Па) — «подсос/утечка»
+        inletDraft:  -150,    // Проектное разрежение под укрытием при номинальном расходе (Па)
         freshFeed:   5.0,     // Свежий Al₂O₃ (т/ч)
         recircFeed:  20,      // Рецирк. AlF₃ (т/ч)
         regenSP:     1.2,     // Уставка авто-продувки (кПа)
@@ -91,11 +110,10 @@ export const state = {
     phys: {
         fanAngle:       0,
         regenCooldown:  0,
-        fContentAccum:  0.3,
+        fContentAccum:  0.7,
         actualTemp:     110,     // Фактическая T° газа (с инерцией)
         receiverPressure: 0.60,  // Давление в ресивере (МПа)
         tickCount:      0,
-        networkK:       8e-12,   // Удельное сопротивление сети (кПа·ч²/м⁶) ~0.7кПа/(300000)²
         regenCycles:    [],      // Таймстампы циклов регенерации для подсчёта ц/ч
         dustSpikeTicks: 0,       // Тики оставшегося скачка пыли при регенерации
         anodeEffectTimer: 0,     // Таймер анодного эффекта (тики)
@@ -141,6 +159,11 @@ export const state = {
         receiverP:    0.60,   // Давление в ресивере (МПа)
         regenCyclesPerHour: 0, // Циклы регенерации в час
         outdoorTemp:  20,     // Т наружного воздуха (для отображения)
+        fanInletTemp: 100,    // Т смеси на всасе дымососа (с подсосом наружного воздуха), °C
+        reactorDP:    0,      // ΔP реактора (кПа)
+        pipesDP:      0,      // ΔP труб с шиберами (кПа)
+        outletDP:     0,      // ΔP выходного тракта: труба, короб (кПа)
+        hfGenLoad:    1,      // Нагрузка по HF относительно номинала (×)
         status:       'НОРМА',
         // Потоки по трубам (для UI)
         pipeFlows: [
@@ -158,6 +181,7 @@ export const state = {
 
     // Режим «Идеальная ГОУ»
     idealMode: false,
+    hold: {},   // параметры, перехваченные оператором в режиме автопилота
 };
 
 // ══════════════════════════════════════════════════════════════════════
@@ -191,89 +215,91 @@ export function tick() {
     O.actualTemp = P.actualTemp;
     const T = P.actualTemp;
 
-    // ── 2. СРЕДНЕЕ ΔP ФИЛЬТРА ──
-    O.avgFilterDP = state.sections.reduce((a, s) => a + s.dp, 0) / C.numSections;
-
-    // ── 3. СОПРОТИВЛЕНИЕ ГАЗОХОДОВ (Дарси-Вейсбах) ──
-    // ΔP_duct = λ × (L/D) × (ρ × v²/2) / 1000 (кПа)
-    // Плотность газа зависит от T газа, а плотность воздуха на входе — от Т наружного
+    // ── 2. ТЕМПЕРАТУРНЫЕ ФАКТОРЫ ──
+    // tf — объёмное расширение газа (нм³ → м³ при T); tFan — T смеси на всасе дымососа:
+    // часть потока — подсос наружного воздуха (false air), поэтому T_наружн. влияет на плотность.
+    const tf = (T + 273) / 273;
+    const tFan = (1 - C.falseAirFrac) * T + C.falseAirFrac * I.outdoorTemp;
+    const tfFan = (tFan + 273) / 273;
     const rhoGas = 1.29 * 273 / (T + 273);
-    const rhoAir = 1.29 * 273 / (I.outdoorTemp + 273); // Плотность подсасываемого воздуха
-    const rhoRatio = rhoAir / 1.205;  // 1.205 = ρ при 20°C (эталон)
-    const vPrev = O.gasVelocity || 8;
-    O.ductDP = C.ductFriction * (C.ductLength / C.ductDiameter) * (rhoGas * vPrev * vPrev / 2) / 1000;
+    // ρ·v² при фиксированном нормальном расходе ∝ (T+273) → масштаб квадратичных потерь
+    const sT = (T + 273) / (C.refTemp + 273);
+    const sTfan = (tFan + 273) / (C.refTemp + 273);
+    // Плотность газа на всасе относительно расчётной (для напора дымососа)
+    const rhoFanRatio = (C.refTemp + 273) / (tFan + 273);
     O.outdoorTemp = I.outdoorTemp;
+    O.fanInletTemp = tFan;
 
-    // ── 4. ОБЩЕЕ ΔP ТРАКТА ──
-    O.totalDP = O.avgFilterDP + O.ductDP + C.reactorDP;
-
-    // ── 5. ДЫМОСОС + НАПРАВЛЯЮЩИЙ АППАРАТ ──
-    // [FIX 1] Аналитическая рабочая точка
+    // ── 3. ХАРАКТЕРИСТИКА СЕТИ  ΔP(Q) = c0 + b·Q + a·Q²  (Q — нм³/ч) ──
     const n = I.fanRPM / 100;
     const alpha = I.guideVane / 100;
 
-    const Qmax = C.nominalFlow * n * alpha;           // м³/ч (при норм. усл.)
-    // [v6] Напор дымососа корректируется на плотность газа (ΔP ∝ ρ)
-    // В зимний период (Т=-30°C) ρ выше → напор выше → ампераж выше
-    // В летний период (Т=+35°C) ρ ниже → напор ниже → ампераж ниже
-    const Pmax = C.maxFanPressure * n * n * Math.pow(alpha, 1.5) * rhoRatio; // кПа
+    // 3a. 4 трубы от корпусов — параллельные ветви; закрытие шибера повышает сопротивление
+    const dSum = I.pipes.reduce((s, p) => s + p.damper / 100, 0);
+    const dEff = Math.max(dSum, 0.08);
 
-    // Температурный фактор (Гей-Люссак)
-    const tempFactor = (T + 273) / 273;
+    // 3b. Фильтр: Дарси для пирога — линейно по расходу. Вязкость газа ↑ с T;
+    //     при T < 90°C — конденсат/залипание рукавов (рост сопротивления пирога).
+    const visc = Math.pow(sT, 0.7);
+    const coldBlind = T < 90 ? 1 + (90 - T) * 0.03 : 1;
+    const humF = 1 + I.gasHumidity * 0.01;
+    const tornPerSec = I.tornBags / C.numSections;
+    const tornReduction = 1 - Math.min(1, tornPerSec / C.bagsPerSection) * 0.4;
+    const cakeCoef = visc * coldBlind * humF * tornReduction;
+    const avgW = state.sections.reduce((a, s) => a + s.cakeMass, 0) / C.numSections;
+    const bF = C.cakeResistance * avgW * cakeCoef / 1000 * tf / (3600 * C.filterArea); // кПа / (нм³/ч)
 
-    // Рабочая точка: Q = Qmax / √(1 + k·Qmax²/Pmax)
-    let gasFlowNorm = 0;
-    if (Pmax > 0.01 && n > 0) {
-        const denom = 1 + P.networkK * Qmax * Qmax / Pmax;
-        gasFlowNorm = denom > 0 ? Qmax / Math.sqrt(denom) : 0;
+    // 3c. Квадратичные потери: газоходы (Дарси-Вейсбах), реактор, трубы с шиберами,
+    //     выходной тракт (дымовая труба, всасывающий короб)
+    const vPerQ = tf / (3600 * C.ductArea);   // м/с на 1 нм³/ч
+    const aDuct = C.ductFriction * (C.ductLength / C.ductDiameter) * rhoGas * 0.5 * vPerQ * vPerQ / 1000;
+    const q2 = 1 / (C.refFlow * C.refFlow);
+    const pipeMult = (4 / dEff) * (4 / dEff);
+    const aQ = aDuct + (C.reactorDP + C.pipeDP * pipeMult) * sT * q2 + C.otherDP * sTfan * q2;
+
+    // ── 4. ДЫМОСОС + НАПРАВЛЯЮЩИЙ АППАРАТ: точная рабочая точка ──
+    // Кривая дымососа: P_fan(Q) = Pmax·(1 − (Q/Qmax)²); Qmax ∝ n·α, Pmax ∝ n²·α^1.5
+    // Вентилятор — объёмная машина: объёмная производительность не зависит от плотности, поэтому
+    // в нормальных м³ (Qmax) она растёт при похолодании, а напор Pmax ∝ плотности газа на всасе.
+    const Qmax = n > 0 ? C.nominalFlow * n * alpha * rhoFanRatio : 0;
+    const Pmax = C.maxFanPressure * n * n * Math.pow(alpha, 1.5) * rhoFanRatio;
+    // Пересечение с сетью:  (a + Pmax/Qmax²)·Q² + b·Q + (c0 − Pmax) = 0
+    let Qn = 0;
+    if (Qmax > 1 && Pmax > C.baseDP) {
+        const A = aQ + Pmax / (Qmax * Qmax);
+        const disc = bF * bF + 4 * A * (Pmax - C.baseDP);
+        Qn = (-bF + Math.sqrt(disc)) / (2 * A);
     }
-
-    // Обновление удельного сопротивления сети: k = ΔP_total / Q²
-    // Используем gasFlowNorm текущего тика для корректировки k к следующему
-    if (gasFlowNorm > 100) {
-        const newK = O.totalDP / (gasFlowNorm * gasFlowNorm);
-        if (isFinite(newK) && newK > 0) {
-            P.networkK += (newK - P.networkK) * 0.1; // Сглаживание
-        }
-    }
-
-    O.gasFlow = gasFlowNorm * tempFactor;
-    if (n <= 0) O.gasFlow = 0;
-    O.normalFlow = gasFlowNorm;
+    O.normalFlow = Qn;
+    O.gasFlow = Qn * tf;                                  // м³/ч при T газа
     O.gasVelocity = (O.gasFlow / 3600) / C.ductArea;
+    O.filtVelocity = (O.gasFlow / 3600) / C.filterArea;   // скорость фильтрации
+    const vf = O.filtVelocity;
 
-    // [FIX 5] Скорость фильтрации (для ΔP пирога и рендера)
-    O.filtVelocity = O.gasFlow > 0 ? (O.gasFlow / 3600) / C.filterArea : 0;
+    // Составляющие ΔP на найденной рабочей точке
+    const qr2 = (Qn * Qn) * q2;
+    O.ductDP = aDuct * Qn * Qn;
+    O.reactorDP = C.reactorDP * sT * qr2;
+    O.pipesDP = C.pipeDP * pipeMult * sT * qr2;
+    O.outletDP = C.otherDP * sTfan * qr2;
 
-    // ── 6. [FIX 2] МОЩНОСТЬ = Q × ΔP / η, ток через мощность ──
-    // N_shaft = Q(м³/с) × ΔP(Па) / η_fan
-    const Q_m3s = O.gasFlow / 3600;
-    const dpPa = O.totalDP * 1000;
-    const N_shaft = Q_m3s * dpPa / C.fanEfficiency; // Вт
-    O.fanPowerKW = N_shaft / 1000;
-
-    // I = P / (U × √3 × cosφ)
-    const U_v = C.fanVoltage * 1000; // В
-    O.fanAmps = O.fanPowerKW > 0 ? (O.fanPowerKW * 1000) / (U_v * 1.732 * C.fanCosF) : 0;
-    if (n <= 0) { O.fanAmps = 0; O.fanPowerKW = 0; }
-
-    // ── 7. ПОТОКИ ПО 4 ТРУБАМ ──
-    // [FIX 8] Разрежение — расчётная величина
-    // P_fan_residual = Pmax - totalDP → это запас тяги дымососа
-    const fanResidual = Math.max(0, Pmax - O.totalDP); // кПа
-    // Расчётное разрежение на входном газоходе (+ пользовательское смещение)
-    O.calcDraft = -(fanResidual * 1000) + (I.inletDraft + 150); // Па (смещение от -150 нормы)
-
+    // ── 5. ПОТОКИ И РАЗРЕЖЕНИЕ ПО 4 ТРУБАМ ──
+    // Расход в ветви ∝ открытию шибера (общий перепад). Разрежение под укрытием корпуса
+    // = проектное значение × (q/q_ном)²: закрытый шибер → q=0 → разрежение пропадает → выбивание.
+    // Ползунок inletDraft — проектное разрежение при номинальном расходе (эталон, напр. −157…−400 Па).
+    const qRefPipe = C.refFlow / 4;
     O.pipeFlows.forEach((pf, i) => {
-        const damper = I.pipes[i].damper / 100;
-        const pipeDraft = fanResidual * damper * 1000; // кПа → Па
-        pf.draft = -pipeDraft + (I.inletDraft + 150); // со смещением
-        pf.flow = O.normalFlow * damper / 4;
-        pf.fugitive = Math.abs(pf.draft) < 50; // < 50 Па → выбивание
+        const d = I.pipes[i].damper / 100;
+        pf.flow = dSum > 0.001 ? Qn * d / dSum : 0;
+        const r = pf.flow / qRefPipe;
+        pf.draft = I.inletDraft * r * r;
+        pf.fugitive = Math.abs(pf.draft) < 50;
         pf.id = I.pipes[i].id;
     });
+    O.calcDraft = O.pipeFlows.reduce((a, p) => a + p.draft, 0) / O.pipeFlows.length;
 
-    // ── 8. [FIX 4] ГЕНЕРАЦИЯ ЗАГРЯЗНИТЕЛЕЙ — зависит от T ──
+    // ── 6. ГЕНЕРАЦИЯ ЗАГРЯЗНИТЕЛЕЙ — зависит от T ──
+    const hfNom = C.hfGenFactor * C.potroomCurrent;
     // При анодных эффектах (T > 140°C) генерация HF возрастает до 4×
     let hfTempFactor = T > 140 ? 1 + (T - 140) * 0.05 : 1.0;
 
@@ -287,118 +313,110 @@ export function tick() {
             state.alarms.push('✓ Анодный эффект на серии завершился');
         }
     }
-
-    const hfGen = C.hfGenFactor * C.potroomCurrent * Math.min(4.5, hfTempFactor);
+    const hfGen = hfNom * Math.min(4.5, hfTempFactor);
     const dustGen = C.dustGenFactor * C.potroomCurrent;
     O.hfGenKgH = hfGen;
-    O.hfIn = O.normalFlow > 0 ? (hfGen * 1e6) / O.normalFlow : 0;
+    O.hfGenLoad = hfNom > 0 ? hfGen / hfNom : 1;
+    O.hfIn = Qn > 0 ? (hfGen * 1e6) / Qn : 0;
 
-    // ── 9. [FIX 3] ДВУХСТУПЕНЧАТАЯ АДСОРБЦИЯ HF ──
-
+    // ── 7. ДВУХСТУПЕНЧАТАЯ АДСОРБЦИЯ HF (Filsorption) ──
     // Температурный штраф: >120°C → экспоненциальное падение
     let tempPenalty = 1.0;
     if (T > 120) tempPenalty = Math.exp(-0.012 * (T - 120));
-
     // Влажность: улучшает адсорбцию (+20% при 20%)
     const humBonus = 1.0 + (I.gasHumidity / 100) * 0.2;
-
-    // [FIX 3] Время контакта через объём реактора
+    // Время контакта через объём реактора
     const contactTimeSec = O.gasFlow > 0 ? (C.reactorVolume / (O.gasFlow / 3600)) : 999;
     O.contactTime = Math.min(99, contactTimeSec);
     const contactF = 1 - Math.exp(-contactTimeSec / C.optimalContactTime);
+    // Насыщение сорбента фтором: выше ~1.8 wt% ёмкость падает (глинозём «сыт»)
+    const satF = 1 - 0.6 * clamp((P.fContentAccum - 1.8) / (C.maxFContent - 1.8), 0, 1);
 
-    // η₁ — Реактор (свежий + рецирк × 0.4)
-    const effAlumina = I.freshFeed * 1.0 + I.recircFeed * C.recircEfficiency;
-    const rRatio = hfGen > 0 ? (effAlumina * 1000 / hfGen) / 50 : 0;
-    let eta1 = C.maxReactorEff * (1 - Math.exp(-C.reactorK * rRatio)) * tempPenalty * contactF * humBonus;
-    eta1 = Math.max(0, Math.min(C.maxReactorEff, eta1));
+    // η₁ — Реактор: удельная масса сорбента на кг HF (свежий + рецирк × эффективность)
+    const effAlumina = I.freshFeed + I.recircFeed * C.recircEfficiency;      // т/ч
+    const sorbRatio = hfGen > 0 ? effAlumina * 1000 / hfGen : 0;             // кг/кг
+    let eta1 = C.maxReactorEff * (1 - Math.exp(-C.reactorK * sorbRatio)) * tempPenalty * contactF * humBonus * satF;
+    eta1 = clamp(eta1, 0, C.maxReactorEff);
 
-    // η₂ — Пирог на рукавах (filsorption)
-    const avgCake = state.sections.reduce((a, s) => a + s.cakeMass, 0) / C.numSections;
-    // avgCake это удельная масса W (кг/м²). Нормализуем для константы (3.0 кг/м² — хороший пирог)
-    const cRatio = avgCake / 3.0;
-    let eta2 = C.maxCakeEff * (1 - Math.exp(-C.cakeK * cRatio)) * tempPenalty;
-    eta2 = Math.max(0, Math.min(C.maxCakeEff, eta2));
+    // η₂ — Пирог на рукавах. При росте нагрузки по HF ёмкость пирога расходуется быстрее.
+    const cRatio = avgW / 3.0;   // 3 кг/м² — «хороший» пирог
+    const loadF = Math.sqrt(Math.max(0.5, O.hfGenLoad));
+    let eta2 = C.maxCakeEff * (1 - Math.exp(-C.cakeK * cRatio / loadF)) * tempPenalty * satF;
+    eta2 = clamp(eta2, 0, C.maxCakeEff);
 
-    // Каскад: η_total = 1 - (1-η₁)(1-η₂)
-    const effTotal = 1 - (1 - eta1) * (1 - eta2);
+    // Порванные рукава: доля газа идёт мимо пирога (проброс газовой фазы вместе с пылью)
+    const tornFrac = Math.min(I.tornBags / C.totalBags, 0.25);
+    const gasBypass = tornFrac * C.tornGasBypass;
+    const slipFrac = (1 - eta1) * ((1 - gasBypass) * (1 - eta2) + gasBypass);
+    const effTotal = 1 - slipFrac;
 
     O.effReactor = eta1 * 100;
     O.effCake = eta2 * 100;
     O.effHF = effTotal * 100;
-    O.hfOut = O.hfIn * (1 - effTotal);
+    O.hfOut = O.hfIn * slipFrac;
 
-    // ── 10. [v6] ДИНАМИЧЕСКАЯ МОДЕЛЬ ПЫЛИ ──
-    // Базовая пыль при целых фильтрах: 2-5 мг/нм³
-    // Зависит от: cakeMass (тоньше пирог → больше проскок), tornBags, регенерация
-    const totalMassIn = dustGen + (I.freshFeed + I.recircFeed) * 1000;
-    
-    // Базовая эффективность пылеулавливания: зависит от толщины пирога
-    const avgCakeDust = state.sections.reduce((a, s) => a + s.cakeMass, 0) / C.numSections;
-    // При нормальном пироге η > 99.995%. При тонком η ~ 99.990%. 
-    // Это обеспечивает базовую пыль ≤ 5 мг/нм³.
-    const cakeEtaDust = 0.99990 + 0.00008 * (1 - Math.exp(-avgCakeDust / 0.5));
-    
-    // Вклад порванных рукавов: каждый порванный рукав — прямой байпас
-    const tornFrac = Math.min(I.tornBags / C.totalBags, 0.25);
-    const tornPenalty = tornFrac * 0.5; // 0.5% потери η на каждый 1% порванных (линейно)
-    
-    let dustEff = (cakeEtaDust * 100) - tornPenalty * 100;
-    O.effDust = Math.max(50, Math.min(99.999, dustEff));
-    
-    // Пыль на выходе (мг/нм³)
-    let dustBase = O.normalFlow > 0
-        ? (totalMassIn * (1 - O.effDust / 100) * 1e6) / O.normalFlow : 0;
-    
-    // Скачок пыли при регенерации (только если порваны рукава!)
-    // При целых фильтрах регенерация не даёт заметного скачка пыли
+    // ── 8. ДИНАМИЧЕСКАЯ МОДЕЛЬ ПЫЛИ ──
+    // Нагрузка на фильтр: пыль электролизёров + циркулирующий глинозём (мг/нм³)
+    const totalMassIn = dustGen + (I.freshFeed + I.recircFeed) * 1000;   // кг/ч
+    const dustLoading = Qn > 0 ? totalMassIn * 1e6 / Qn : 0;
+    // Проскок через целый рукав зависит от толщины пирога (тоньше → больше): итого ~2–5 мг/нм³
+    const cakeEtaDust = 0.99990 + 0.00008 * (1 - Math.exp(-avgW / 0.5));
+    const dustBase = dustLoading * (1 - cakeEtaDust);
+    // Порыв рукава: прямой пролом (доля газа × доля пыли, прошедшая через дыру)
+    const dustTorn = dustLoading * tornFrac * C.tornDustLeak;
+    let dustTotal = dustBase + dustTorn;
+    O.effDust = dustLoading > 0 ? clamp(100 * (1 - dustTotal / dustLoading), 0, 99.9999) : 100;
+    // Скачок пыли при импульсе (только при порванных рукавах — диагностический признак)
     if (P.dustSpikeTicks > 0) {
         const spikeAmplitude = I.tornBags > 0 ? (3 + I.tornBags * 0.5) : 0.2;
-        dustBase += spikeAmplitude * (P.dustSpikeTicks / 5);
+        dustTotal += spikeAmplitude * (P.dustSpikeTicks / 5);
         P.dustSpikeTicks--;
     }
-    
-    O.dustOut = Math.max(0, dustBase);
+    O.dustOut = Math.max(0, dustTotal);
 
-    // ── 11. [FIX 5+6] НАКОПЛЕНИЕ ПИРОГА НА СЕКЦИЯХ ──
-    const mps = O.gasFlow > 0 ? totalMassIn / C.numSections : 0;
+    // ── 9. НАКОПЛЕНИЕ ПИРОГА И ΔP СЕКЦИЙ ──
+    const mps = Qn > 0 ? totalMassIn / C.numSections : 0;
     let airUsedThisTick = 0;
     const sectionArea = C.filterArea / C.numSections;
-    const vf = O.filtVelocity;
+    // Эффективность импульса зависит от давления в ресивере (плавно)
+    const airFactor = clamp((P.receiverPressure - 0.25) / 0.20, 0.3, 1.0);
+    const sectionDP = (W) => C.baseDP + C.cakeResistance * vf * W * cakeCoef / 1000;
 
     state.sections.forEach((sec, i) => {
         if (sec.isRegen) {
-            // Импульсная регенерация: одноразовый сброс на первом тике
+            // Импульсная регенерация: одноразовый сброс на первом тике.
+            // Импульс сбивает лишь часть пирога СВЕРХ остаточного слоя (масса сохраняется).
             if (sec.regenTimer === sec.regenTimerMax) {
-                // Первый тик продувки — резкий удар сжатого воздуха
-                const airOk = P.receiverPressure > 0.3;
-                const blowEff = airOk ? C.pulseBlowEff : C.pulseBlowEffLow;
-                sec.cakeMass = sec.cakeMass * (1 - blowEff) + C.residualCake;
+                const removed = C.pulseBlowEff * airFactor * Math.max(0, sec.cakeMass - C.residualCake);
+                sec.cakeMass -= removed;
                 O.pulseFlash[i] = true;
-                // [v6] Скачок пыли при регенерации
                 P.dustSpikeTicks = 5; // 0.5 сек скачок
             }
             sec.regenTimer--;
-            const W = sec.cakeMass;
-            sec.dp = C.baseDP + (C.cakeResistance * vf * W * (1 + I.gasHumidity * 0.01)) / 1000;
-            if (sec.regenTimer <= 0) {
-                sec.isRegen = false;
-                sec.dp = Math.max(C.baseDP, sec.dp);
-            }
-        } else if (O.gasFlow > 0) {
-            // Накопление пирога: ускоренное в 60 раз для интерактивности
-            const simTimeFactor = 60;
-            const deltaW = (mps * 0.1 * simTimeFactor / 3600) / sectionArea;
-            sec.cakeMass += deltaW;
-
-            const W = sec.cakeMass;
-            const tInSec = Math.min(I.tornBags, C.bagsPerSection) / C.bagsPerSection;
-            const tornReduction = (1 - tInSec * 0.4);
-            sec.dp = C.baseDP + (C.cakeResistance * vf * W * tornReduction * (1 + I.gasHumidity * 0.01)) / 1000;
+            sec.dp = sectionDP(sec.cakeMass);
+            if (sec.regenTimer <= 0) sec.isRegen = false;
+        } else if (Qn > 0) {
+            // Накопление пирога: модельное время ускорено ×60 (1 тик = 6 с)
+            sec.cakeMass += (mps * 0.1 * C.simTimeFactor / 3600) / sectionArea;
+            sec.dp = sectionDP(sec.cakeMass);
+        } else {
+            sec.dp = C.baseDP;
         }
     });
 
-    // ── 12. АВТО-РЕГЕНЕРАЦИЯ (секционная, по очереди) ──
+    // Итоговые ΔP тракта по фактическим ΔP секций
+    O.avgFilterDP = state.sections.reduce((a, s) => a + s.dp, 0) / C.numSections;
+    O.totalDP = O.avgFilterDP + O.ductDP + O.reactorDP + O.pipesDP + O.outletDP;
+
+    // ── 10. МОЩНОСТЬ ДЫМОСОСА И ТОК ──
+    // N_вал = Q(м³/с на всасе) × ΔP(Па) / η_вент;  N_эл = N_вал / η_двиг;  I = P / (√3·U·cosφ)
+    const Q_fan = Qn * tfFan / 3600;
+    const N_shaft = Q_fan * O.totalDP * 1000 / C.fanEfficiency;
+    O.fanPowerKW = N_shaft / C.motorEfficiency / 1000;
+    O.fanAmps = (O.fanPowerKW * 1000) / (C.fanVoltage * 1000 * 1.732 * C.fanCosF);
+    if (n <= 0 || Qn <= 0) { O.fanAmps = 0; O.fanPowerKW = 0; }
+
+    // ── 11. АВТО-РЕГЕНЕРАЦИЯ (секционная, по очереди, по уставке ΔP) ──
     if (P.regenCooldown > 0) P.regenCooldown--;
     if (P.regenCooldown <= 0) {
         let worstIdx = -1, worstDP = 0;
@@ -412,58 +430,36 @@ export function tick() {
             sec.isRegen = true;
             sec.regenTimerMax = 15;
             sec.regenTimer = 15;
-            P.regenCooldown = 45;
-
-            // Расход сжатого воздуха
-            const airVol = C.bagsPerSection * C.pulseVolume;
-            airUsedThisTick += airVol;
+            P.regenCooldown = C.regenCooldownTicks;
+            airUsedThisTick += C.bagsPerSection * C.pulseVolume;
             P.receiverPressure -= C.airPressureDrop;
-
-            // [v6] Счётчик циклов регенерации
-            P.regenCycles.push(P.tickCount);
-
+            P.regenCycles.push(P.tickCount);   // счётчик циклов регенерации
             state.alarms.push(`↻ Авто-продувка: Секция ${worstIdx + 1} (ΔP=${worstDP.toFixed(2)} кПа)`);
         }
     }
 
-    // ── 13. СЖАТЫЙ ВОЗДУХ ──
-    P.receiverPressure += C.airRecoveryRate;
-    P.receiverPressure = Math.min(C.airPressureNom, Math.max(0, P.receiverPressure));
+    // ── 12. СЖАТЫЙ ВОЗДУХ ──
+    // Компрессор имеет конечную производительность: при очень частых импульсах ресивер «садится»
+    P.receiverPressure = clamp(P.receiverPressure + C.airRecoveryRate, 0, C.airPressureNom);
     O.receiverP = P.receiverPressure;
-    O.airConsumption = airUsedThisTick * 10 * 60;
 
-    // ── 14. [v6] СОДЕРЖАНИЕ F В ГЛИНОЗЁМЕ — НАКОПИТЕЛЬНАЯ МОДЕЛЬ ──
-    // В реальности глинозём рециркулирует много раз, накапливая F.
-    // Целевое: 0.5–1.5% за несколько часов (в ускоренном времени — за минуты).
-    // Модель: F% стремится к равновесному значению, определяемому соотношением
-    // (уловленный F) / (поток свежего глинозёма, разбавляющего систему).
-    const hfCaptured = hfGen * effTotal;         // кг/ч HF уловлено
-    const fCaptured = hfCaptured * (19 / 20);     // кг/ч F (атомная масса F/HF)
-    const totAlumina = (I.freshFeed + I.recircFeed) * 1000; // кг/ч
-    if (totAlumina > 0) {
-        // Равновесное F%: рециркуляция накапливает F, свежий глинозём разбавляет.
-        // При recircFeed >> freshFeed → F% стремится к максимуму
-        // При freshFeed >> recircFeed → F% остаётся низким (разбавление)
-        const recircRatio = I.recircFeed / (I.freshFeed + 0.1); // защита от /0
-        // Равновесное: F_eq ≈ (HF_captured × recircCycles) / freshFlow
-        // Упрощённо: чем больше рецирк. → тем выше F%, но с насыщением
-        const equilibriumF = Math.min(C.maxFContent,
-            (fCaptured * recircRatio * 0.8) / (I.freshFeed * 1000 + 1) * 100);
-        // Сглаживание: τ ≈ 30 сек симуляции (ускоренных) → ~30 мин реальных
-        const tau = 0.01; // Коэфф. сглаживания на тик
-        P.fContentAccum += (equilibriumF - P.fContentAccum) * tau;
-        P.fContentAccum = Math.max(0.01, P.fContentAccum); // минимум 0.01%
-        O.fContent = Math.min(C.maxFContent, P.fContentAccum);
-    } else {
-        O.fContent = 0;
-    }
-
-    // ── 14b. [v6] СЧЁТЧИК ЦИКЛОВ РЕГЕНЕРАЦИИ В ЧАС ──
-    // Считаем циклы за последние 600 тиков (= 60 сек реальных = ~60 мин симуляции)
+    // ── 13. СЧЁТЧИК ЦИКЛОВ РЕГЕНЕРАЦИИ В ЧАС ──
+    // 600 тиков = 1 ч модельного времени (1 тик = 6 с)
     const windowTicks = 600;
     P.regenCycles = P.regenCycles.filter(t => P.tickCount - t < windowTicks);
-    // Нормируем к часу: 600 тиков = 1 час симуляции (при simTimeFactor=60)
     O.regenCyclesPerHour = P.regenCycles.length;
+    O.airConsumption = O.regenCyclesPerHour * C.bagsPerSection * C.pulseVolume;  // нм³/ч
+
+    // ── 14. БАЛАНС ФТОРА В ЦИРКУЛИРУЮЩЕМ ГЛИНОЗЁМЕ ──
+    // Уловленный F накапливается в контуре (запас M_c), выводится с потоком свежего глинозёма
+    // на электролиз:  M_c·df/dt = F_улов − f·Q_свежий.  Равновесие f = F_улов / Q_свежий:
+    // меньше свежего (больше рецирк.) → F% растёт; больше свежего → разбавление.
+    const fCapturedKgH = hfGen * effTotal * (19 / 20);
+    const outFlowKgH = I.freshFeed * 1000;
+    const dtH = C.simTimeFactor * 0.1 / 3600;       // ч модельного времени за тик
+    const dF = (fCapturedKgH - P.fContentAccum / 100 * outFlowKgH) / (C.circulatingInventory * 1000) * 100 * dtH;
+    P.fContentAccum = clamp(P.fContentAccum + dF, 0.01, C.maxFContent);
+    O.fContent = P.fContentAccum;
 
     // ── 15. СТАТУС И АЛАРМЫ ──
     const bits = [];
@@ -478,8 +474,16 @@ export function tick() {
         bits.push('ПРОСКОК HF');
         state.alarms.push(`⚠ ПРОСКОК HF: η=${O.effHF.toFixed(1)}%`);
     }
-    // [FIX 8] Используем расчётное разрежение
-    if (O.calcDraft > -50) bits.push('ВЫБИВАНИЕ');
+    // Выбивание фиксируется по конкретной трубе (разрежение < 50 Па по модулю)
+    const fugitivePipes = O.pipeFlows.filter(p => p.fugitive).map(p => p.id);
+    if (fugitivePipes.length > 0) {
+        bits.push(`ВЫБИВАНИЕ: ${fugitivePipes.join(',')}`);
+        state.alarms.push(`⚠ ВЫБИВАНИЕ газа из корпуса (труба ${fugitivePipes.join(', ')}): слабое разрежение`);
+    }
+    if (O.fanAmps > C.fanMaxAmps) {
+        bits.push('ПЕРЕГРУЗКА ДВИГАТЕЛЯ');
+        state.alarms.push(`⚠ ПЕРЕГРУЗКА двигателя дымососа: ${Math.round(O.fanAmps)} А > ${C.fanMaxAmps} А`);
+    }
     if (n === 0) bits.push('ДЫМОСОС СТОП');
     if (T > 160) {
         bits.push('ПЕРЕГРЕВ');
@@ -500,7 +504,7 @@ export function tick() {
 
     // Если активен режим «Идеальная ГОУ» (Автопилот советчика) — непрерывно подстраиваем
     if (state.idealMode) {
-        autoTune(null);
+        autopilotStep();
     }
 }
 
@@ -522,12 +526,20 @@ export function addTornBag() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-//  РЕЖИМ «ИДЕАЛЬНАЯ ГОУ» — автоподстройка параметров
+//  РЕЖИМ «ИДЕАЛЬНАЯ ГОУ» — АВТОПИЛОТ (без «читов»: только реальные актуаторы)
+//  Автопилот не обнуляет неисправности и не подменяет физику. Он ведёт:
+//    • НА дымососа — интегральный регулятор по нормальному расходу (держит refFlow,
+//      компенсируя зиму/лето, закрытые шиберы, ΔP фильтра);
+//    • подачу свежего глинозёма — по фактической нагрузке HF (анодный эффект, T газа)
+//      и порывам рукавов; рециркуляцию = 4× свежего;
+//    • уставку регенерации — пропорционально √нагрузки по сорбенту (частота ≈ 50–60 ц/ч);
+//    • T газа, влажность, проектное разрежение, обороты — в проектные значения.
+//  Параметр, который оператор двинул вручную, автопилот не трогает (state.hold).
 // ══════════════════════════════════════════════════════════════════════
 
 const IDEAL = {
     fanRPM:     100,
-    guideVane:  78,
+    guideVane:  69,
     gasTempSP:  105,
     gasHumidity: 5,
     inletDraft: -150,
@@ -535,59 +547,70 @@ const IDEAL = {
     recircFeed: 22,
     regenSP:    1.2,
     pipesDamper: 100,
-    outdoorTemp: 20,
 };
 
+// Параметры, которыми управляет автопилот
+const AUTOPILOT_PARAMS = ['guideVane', 'fanRPM', 'freshFeed', 'recircFeed', 'gasTempSP',
+                          'gasHumidity', 'inletDraft', 'regenSP'];
+
+/**
+ * Вызывается из UI при ручном изменении параметра в режиме автопилота (оператор перехватил
+ * управление этим параметром), либо с null/'idealReset' — для штатного сброса в оптимум.
+ */
 export function autoTune(changedParam) {
     const I = state.inputs;
+    if (changedParam && changedParam !== 'idealReset') {
+        if (AUTOPILOT_PARAMS.includes(changedParam)) state.hold[changedParam] = true;
+        return;
+    }
+    // Однократный возврат в проектный режим (включение «Идеальной ГОУ»)
+    state.hold = {};
+    I.fanRPM = IDEAL.fanRPM;
+    I.guideVane = IDEAL.guideVane;
+    I.gasTempSP = IDEAL.gasTempSP;
+    I.gasHumidity = IDEAL.gasHumidity;
+    I.inletDraft = IDEAL.inletDraft;
+    I.freshFeed = IDEAL.freshFeed;
+    I.recircFeed = IDEAL.recircFeed;
+    I.regenSP = IDEAL.regenSP;
+    I.pipes.forEach(p => p.damper = IDEAL.pipesDamper);
+    I.tornBags = 0;
+}
+
+/** Один шаг автопилота (вызывается каждый тик при state.idealMode) */
+function autopilotStep() {
+    const I = state.inputs;
+    const O = state.out;
     const C = config;
+    const H = state.hold;
 
-    const avgDamper = I.pipes.reduce((a, p) => a + p.damper, 0) / 4 / 100;
-    const tempRatio = (I.gasTempSP + 273) / (IDEAL.gasTempSP + 273);
-    const damperCompensation = avgDamper > 0.5 ? 1.0 : (1.0 + (1.0 - avgDamper) * 0.4);
-    
-    // Компенсация наружной температуры: 
-    // Зимой плотность воздуха выше, напор больше -> НА надо прикрывать.
-    const outdoorRatio = (IDEAL.outdoorTemp + 273) / (I.outdoorTemp + 273);
-    const outdoorCompensation = 1 / Math.sqrt(outdoorRatio);
+    if (!H.fanRPM) I.fanRPM = IDEAL.fanRPM;
+    if (!H.gasTempSP) I.gasTempSP = IDEAL.gasTempSP;
+    if (!H.gasHumidity) I.gasHumidity = IDEAL.gasHumidity;
+    if (!H.inletDraft) I.inletDraft = IDEAL.inletDraft;
 
-    if (changedParam !== 'guideVane') {
-        I.guideVane = Math.round(clamp(IDEAL.guideVane * tempRatio * damperCompensation * outdoorCompensation, 20, 100));
-    }
-    if (changedParam !== 'fanRPM') {
-        I.fanRPM = IDEAL.fanRPM;
+    // НА: интегральный регулятор расхода (шаг ≤0.5 %/тик, как реальный привод НА)
+    if (!H.guideVane && O.normalFlow > 0) {
+        const err = (C.refFlow - O.normalFlow) / C.refFlow;
+        I.guideVane = clamp(I.guideVane + clamp(err * 40, -0.5, 0.5), 20, 100);
     }
 
-    const hfGen = C.hfGenFactor * C.potroomCurrent;
-    const flowFraction = I.guideVane / 100;
-
-    if (changedParam !== 'freshFeed') {
-        const contactQuality = flowFraction > 0.5 ? 1.0 : (1.0 + (0.5 - flowFraction) * 0.8);
-        const tornCompensation = 1.0 + (I.tornBags / 200);
-        I.freshFeed = parseFloat(clamp(IDEAL.freshFeed * contactQuality * tornCompensation, 2.0, 10.0).toFixed(1));
+    // Подача сорбента: фактическая нагрузка по HF + запас на порывы рукавов
+    const load = Math.max(0.6, O.hfGenLoad || 1);
+    const tornKick = 1 + I.tornBags / 100;
+    if (!H.freshFeed) {
+        const target = clamp(IDEAL.freshFeed * load * tornKick, 2.0, 10.0);
+        I.freshFeed = parseFloat((I.freshFeed + (target - I.freshFeed) * 0.1).toFixed(2));
     }
-    if (changedParam !== 'recircFeed') {
-        I.recircFeed = parseFloat(clamp(I.freshFeed * 4, 5, 40).toFixed(1));
+    if (!H.recircFeed) {
+        const target = clamp(I.freshFeed * 4, 5, 40);
+        I.recircFeed = parseFloat((I.recircFeed + (target - I.recircFeed) * 0.1).toFixed(2));
     }
-    if (changedParam !== 'gasTempSP') {
-        if (!changedParam) I.gasTempSP = IDEAL.gasTempSP;
-    }
-    if (changedParam !== 'gasHumidity') {
-        I.gasHumidity = IDEAL.gasHumidity;
-    }
-    if (changedParam !== 'inletDraft') {
-        I.inletDraft = Math.round(clamp(-50 - flowFraction * 150, -400, -50));
-    }
-    if (changedParam !== 'regenSP') {
+    if (!H.regenSP) {
         const feedRatio = (I.freshFeed + I.recircFeed * C.recircEfficiency) /
                           (IDEAL.freshFeed + IDEAL.recircFeed * C.recircEfficiency);
-        // Чтобы сохранить нормальную частоту продувок (~60 ц/ч) при росте нагрузки,
-        // нужно позволить пирогу накапливаться толще (увеличить уставку ΔP).
-        I.regenSP = parseFloat(clamp(IDEAL.regenSP * Math.sqrt(feedRatio), 0.8, 2.5).toFixed(2));
-    }
-    if (!changedParam || changedParam === 'idealReset') {
-        I.pipes.forEach(p => p.damper = IDEAL.pipesDamper);
-        I.tornBags = 0;
+        const target = clamp(IDEAL.regenSP * Math.sqrt(feedRatio), 0.8, 2.5);
+        I.regenSP = parseFloat((I.regenSP + (target - I.regenSP) * 0.1).toFixed(2));
     }
 }
 
@@ -597,7 +620,7 @@ export function setIdealMode(on) {
     state.idealMode = on;
     if (on) {
         autoTune(null);
-        state.alarms.push('✨ АВТОПИЛОТ СОВЕТЧИКА: ВКЛЮЧЁН (все контуры оптимизированы)');
+        state.alarms.push('✨ АВТОПИЛОТ СОВЕТЧИКА: ВКЛЮЧЁН (режим проектных уставок, НА ведёт расход)');
     } else {
         state.alarms.push('⏹ АВТОПИЛОТ СОВЕТЧИКА: ВЫКЛЮЧЕН (ручной режим оператора)');
     }
@@ -682,40 +705,106 @@ export function runPredictiveDiagnostics() {
         aluminaDesc = `HF на выходе ${O.hfOut.toFixed(2)} мг/нм³ превышает ПДК (0.5 мг/нм³)`;
         score -= Math.min(45, (O.hfOut - 0.5) * 40 + 20);
 
-        const neededFresh = parseFloat(Math.min(10.0, I.freshFeed + (O.hfOut > 1.0 ? 2.0 : 1.0)).toFixed(1));
-        const neededRecirc = parseFloat(Math.min(40.0, neededFresh * 4).toFixed(1));
-        recs.push({
-            id: 'prevent_hf_slip',
-            module: 'alumina',
-            type: 'danger',
-            title: `Превышение ПДК по фтористому водороду (${O.hfOut.toFixed(2)} мг/нм³)`,
-            reason: `Недостаточная емкость глинозёма при текущей генерации HF. Риск экологических санкций (до 5000 ₽/ч).`,
-            actionText: `Увеличить подачу: свежий ${neededFresh} т/ч, рецирк ${neededRecirc} т/ч`,
-            effectText: 'Снижение HF на выходе ниже 0.3 мг/нм³, отмена штрафов',
-            apply: () => {
-                I.freshFeed = neededFresh;
-                I.recircFeed = neededRecirc;
-                state.alarms.push(`✓ Советчик: подача сорбента увеличена до ${neededFresh}/${neededRecirc} т/ч`);
-            }
-        });
-    } else if (O.fContent < 0.9 && I.freshFeed > 3.0 && P.tickCount > 100) {
+        let recHF;
+        if (O.actualTemp > 115 || I.gasTempSP > 118) {
+            recHF = {
+                id: 'prevent_hf_slip', module: 'alumina', type: 'danger',
+                title: `Проскок HF из-за перегрева газа (${O.actualTemp.toFixed(0)}°C)`,
+                reason: `При T > 120°C хемосорбция HF на глинозёме падает (десорбция). HF на выходе ${O.hfOut.toFixed(2)} мг/нм³.`,
+                actionText: 'Вернуть T газа на входе в реактор к 105°C',
+                effectText: 'Восстановление хемосорбции, HF ниже 0.5 мг/нм³',
+                apply: () => {
+                    I.gasTempSP = 105;
+                    state.alarms.push('✓ Советчик: уставка T газа возвращена к 105°C');
+                }
+            };
+        } else if (O.normalFlow > config.refFlow * 1.1) {
+            const vaneOpt = Math.round(clamp(I.guideVane + (config.refFlow - O.normalFlow) / 3000, 20, 100));
+            recHF = {
+                id: 'prevent_hf_slip', module: 'alumina', type: 'danger',
+                title: `Проскок HF: слишком короткий контакт (τ=${O.contactTime.toFixed(1)} с)`,
+                reason: `Расход ${Math.round(O.normalFlow / 1000)} тыс. нм³/ч выше проектного — газ проходит реактор быстрее, сорбент не успевает связать HF.`,
+                actionText: `Прикрыть НА до ${vaneOpt}% (вернуть проектный расход)`,
+                effectText: 'Рост времени контакта и η₁ реактора, HF ниже ПДК, экономия электроэнергии',
+                apply: () => {
+                    I.guideVane = vaneOpt;
+                    state.alarms.push(`✓ Советчик: НА прикрыт до ${vaneOpt}% (контакт газ/сорбент)`);
+                }
+            };
+        } else if (I.regenSP < 1.0 && O.regenCyclesPerHour > 65) {
+            const newSP = parseFloat(clamp(I.regenSP + 0.4, 0.8, 2.5).toFixed(2));
+            recHF = {
+                id: 'prevent_hf_slip', module: 'alumina', type: 'danger',
+                title: `Проскок HF: пирог на рукавах слишком тонкий`,
+                reason: `Уставка ΔP ${I.regenSP} кПа заставляет сбрасывать пирог чаще ${O.regenCyclesPerHour} раз/ч — доочистка (η₂) падает.`,
+                actionText: `Поднять уставку регенерации до ${newSP} кПа`,
+                effectText: 'Рост η₂ пирога, HF ниже ПДК, экономия сжатого воздуха',
+                apply: () => {
+                    I.regenSP = newSP;
+                    state.alarms.push(`✓ Советчик: уставка ΔP ${newSP} кПа`);
+                }
+            };
+        } else {
+            const neededFresh = parseFloat(Math.min(10.0, I.freshFeed + (O.hfOut > 1.0 ? 2.0 : 1.0)).toFixed(1));
+            const neededRecirc = parseFloat(Math.min(40.0, neededFresh * 4).toFixed(1));
+            recHF = {
+                id: 'prevent_hf_slip', module: 'alumina', type: 'danger',
+                title: `Превышение ПДК по фтористому водороду (${O.hfOut.toFixed(2)} мг/нм³)`,
+                reason: `Недостаточная ёмкость глинозёма при текущей генерации HF. Риск экологических санкций (до 5000 ₽/ч).`,
+                actionText: `Увеличить подачу: свежий ${neededFresh} т/ч, рецирк ${neededRecirc} т/ч`,
+                effectText: 'Снижение HF на выходе ниже 0.5 мг/нм³, отмена штрафов',
+                apply: () => {
+                    I.freshFeed = neededFresh;
+                    I.recircFeed = neededRecirc;
+                    state.alarms.push(`✓ Советчик: подача сорбента увеличена до ${neededFresh}/${neededRecirc} т/ч`);
+                }
+            };
+        }
+        recs.push(recHF);
+    } else if (P.tickCount > 100 && O.fContent < 0.45 && I.freshFeed > 3.0) {
+        // Равновесное F = F_улов / Q_свежий → глинозём «бедный»: свежего подаётся больше необходимого
         aluminaStatus = 'warn';
         aluminaLabel = 'БЕДНЫЙ ГЛИНОЗЁМ';
-        aluminaDesc = `Насыщение глинозёма ${O.fContent.toFixed(2)} wt% F (цель: 1.2–2.0%). Недоиспользование сорбента`;
+        aluminaDesc = `Насыщение глинозёма ${O.fContent.toFixed(2)} wt% F (цель: 0.5–1.5%). Недоиспользование сорбента`;
         score -= 8;
 
-        const optRecirc = parseFloat(Math.min(40.0, I.freshFeed * 4.5).toFixed(1));
+        const captKgH = O.hfGenKgH * O.effHF / 100 * 19 / 20;
+        const optFresh = parseFloat(clamp(captKgH / 9, 2.0, I.freshFeed).toFixed(1));  // F≈0.9%
         recs.push({
             id: 'opt_f_saturation',
             module: 'alumina',
             type: 'warn',
             title: `Низкое насыщение глинозёма фтором (${O.fContent.toFixed(2)} wt%)`,
-            reason: `Слишком много свежего сорбента сбрасывается обратно в электролиз без глубокого насыщения.`,
-            actionText: `Увеличить кратность рециркуляции до ${optRecirc} т/ч`,
-            effectText: 'Рост насыщения до 1.4–1.8 wt% F, экономия свежего глинозёма',
+            reason: `Свежего глинозёма подаётся больше, чем нужно для улавливания ${O.hfGenKgH.toFixed(0)} кг/ч HF — сорбент уходит в электролиз недонасыщенным.`,
+            actionText: `Снизить подачу свежего до ${optFresh} т/ч (рецирк ${(optFresh * 4).toFixed(1)} т/ч)`,
+            effectText: 'Рост насыщения до ~0.9 wt% F, экономия свежего глинозёма',
             apply: () => {
-                I.recircFeed = optRecirc;
-                state.alarms.push(`✓ Советчик: рециркуляция увеличена до ${optRecirc} т/ч для насыщения F`);
+                I.freshFeed = optFresh;
+                I.recircFeed = parseFloat(Math.min(40, optFresh * 4).toFixed(1));
+                state.alarms.push(`✓ Советчик: подача свежего снижена до ${optFresh} т/ч`);
+            }
+        });
+    } else if (P.tickCount > 100 && O.fContent > 1.8) {
+        // Пересыщение: падает ёмкость сорбента, растёт риск проскока HF
+        aluminaStatus = 'warn';
+        aluminaLabel = 'ПЕРЕНАСЫЩЕНИЕ F';
+        aluminaDesc = `Насыщение глинозёма ${O.fContent.toFixed(2)} wt% F (>1.8%) — ёмкость исчерпана, риск проскока HF`;
+        score -= 8;
+
+        const captKgH = O.hfGenKgH * O.effHF / 100 * 19 / 20;
+        const optFresh = parseFloat(clamp(captKgH / 11, I.freshFeed, 10).toFixed(1));  // F≈1.1%
+        recs.push({
+            id: 'opt_f_saturation',
+            module: 'alumina',
+            type: 'warn',
+            title: `Перенасыщение глинозёма фтором (${O.fContent.toFixed(2)} wt%)`,
+            reason: `Подача свежего глинозёма мала относительно генерации HF — F накапливается в контуре.`,
+            actionText: `Увеличить подачу свежего до ${optFresh} т/ч (рецирк ${(optFresh * 4).toFixed(1)} т/ч)`,
+            effectText: 'Снижение F до ~1.1 wt%, запас по ёмкости сорбции',
+            apply: () => {
+                I.freshFeed = optFresh;
+                I.recircFeed = parseFloat(Math.min(40, optFresh * 4).toFixed(1));
+                state.alarms.push(`✓ Советчик: подача свежего увеличена до ${optFresh} т/ч`);
             }
         });
     }
@@ -727,68 +816,96 @@ export function runPredictiveDiagnostics() {
     let fanLabel = 'В НОРМЕ';
     let fanDesc = 'Разрежение стабильно, режим дымососа энергоэффективен';
 
-    if (O.calcDraft > -60) {
+    // Чувствительность расхода к НА (≈3000 нм³/ч на 1 % открытия вблизи рабочей точки)
+    const FLOW_PER_VANE = 3000;
+    const vaneForRef = Math.round(clamp(I.guideVane + (config.refFlow - O.normalFlow) / FLOW_PER_VANE, 20, 100));
+    const fugitivePipes = O.pipeFlows.filter(p => p.fugitive);
+    const closedPipes = fugitivePipes.filter(p => I.pipes.find(x => x.id === p.id).damper < 95);
+
+    if (O.normalFlow > 0 && closedPipes.length > 0) {
         fanStatus = 'danger';
         fanLabel = 'ВЫБИВАНИЕ';
-        fanDesc = `Критически слабое разрежение: ${Math.round(O.calcDraft)} Па (норма -150 Па). Загазованность цеха!`;
+        const ids = closedPipes.map(p => p.id).join(', ');
+        fanDesc = `Шибер трубы ${ids} прикрыт: нет разрежения, газ выходит в корпус`;
         score -= 30;
-
-        const neededVane = Math.min(100, Math.round(I.guideVane + 15));
+        recs.push({
+            id: 'open_damper',
+            module: 'fan',
+            type: 'danger',
+            title: `Выбивание газа: прикрыт шибер ${ids}`,
+            reason: `Поток через трубу ${ids} упал, разрежение у электролизёров < 50 Па. Остальные трубы перегружены.`,
+            actionText: `Открыть шибер(ы) ${ids} до 100%`,
+            effectText: 'Восстановление разрежения, перераспределение потока по 4 трубам',
+            apply: () => {
+                closedPipes.forEach(p => { I.pipes.find(x => x.id === p.id).damper = 100; });
+                state.alarms.push(`✓ Советчик: шиберы ${ids} открыты`);
+            }
+        });
+    } else if (O.normalFlow > 0 && (fugitivePipes.length > 0 || O.calcDraft > -100)) {
+        const slight = fugitivePipes.length === 0;
+        fanStatus = slight ? 'warn' : 'danger';
+        fanLabel = slight ? 'СЛАБОЕ РАЗРЕЖЕНИЕ' : 'ВЫБИВАНИЕ';
+        fanDesc = `Разрежение ${Math.round(O.calcDraft)} Па (проект ${I.inletDraft} Па). ${slight ? 'Ниже проектного — риск выбивания' : 'Загазованность цеха!'}`;
+        score -= slight ? 12 : 30;
+        const neededVane = Math.max(vaneForRef, Math.min(100, I.guideVane + 5));
         recs.push({
             id: 'prevent_gas_escape',
             module: 'fan',
-            type: 'danger',
-            title: `Опасность загазованности цеха (тяга ${Math.round(O.calcDraft)} Па)`,
-            reason: `Тяги дымососа недостаточно для эвакуации газов от электролизеров. Газ выходит в атмосферу корпуса.`,
+            type: slight ? 'warn' : 'danger',
+            title: `${slight ? 'Слабое разрежение' : 'Опасность загазованности цеха'} (тяга ${Math.round(O.calcDraft)} Па)`,
+            reason: `Расход ${Math.round(O.normalFlow / 1000)} тыс. нм³/ч ниже проектного ${Math.round(config.refFlow / 1000)} тыс. — тяги недостаточно для эвакуации газов от электролизёров.`,
             actionText: `Приоткрыть НА дымососа до ${neededVane}%`,
-            effectText: 'Восстановление разрежения до -150 Па, безопасная атмосфера в цехе',
+            effectText: 'Восстановление проектного разрежения, безопасная атмосфера в цехе',
             apply: () => {
                 I.guideVane = neededVane;
-                state.alarms.push(`✓ Советчик: НА открыт до ${neededVane}% для ликвидации выбивания`);
+                state.alarms.push(`✓ Советчик: НА открыт до ${neededVane}% для восстановления разрежения`);
             }
         });
-    } else if (I.outdoorTemp <= -10 && I.guideVane > 65) {
-        // [Рекомендация эксперта из talk.txt]: Зимой воздух плотный, НА можно поджать
-        const optVane = Math.max(45, Math.round(I.guideVane - 12));
-        const savedKW = Math.round(O.fanPowerKW * 0.14);
+    } else if (O.fanAmps > config.fanMaxAmps) {
+        fanStatus = 'danger';
+        fanLabel = 'ПЕРЕГРУЗКА';
+        fanDesc = `Ток ${Math.round(O.fanAmps)} А выше номинала двигателя ${config.fanMaxAmps} А`;
+        score -= 25;
+        recs.push({
+            id: 'fan_overload',
+            module: 'fan',
+            type: 'danger',
+            title: `Перегрузка двигателя дымососа (${Math.round(O.fanAmps)} А)`,
+            reason: `Мощность ${Math.round(O.fanPowerKW)} кВт превышает номинал. Риск срабатывания защиты и останова ГОУ.`,
+            actionText: `Прикрыть НА до ${vaneForRef}%`,
+            effectText: 'Ток двигателя в пределах номинала, расход вернётся к проектному',
+            apply: () => {
+                I.guideVane = vaneForRef;
+                state.alarms.push(`✓ Советчик: НА прикрыт до ${vaneForRef}% (защита двигателя)`);
+            }
+        });
+    } else if (O.normalFlow > config.refFlow * 1.1 && I.guideVane > 25) {
+        // Избыточный расход: аффинитет — мощность дымососа ~ Q^2.5, зимой (плотный воздух) это
+        // проявляется при тех же положениях НА сильнее [talk.txt]
+        const winter = I.outdoorTemp <= -10;
+        const r = config.refFlow / O.normalFlow;
+        const savedKW = Math.round(O.fanPowerKW * (1 - Math.pow(r, 2.5)));
         const savedRubDay = Math.round(savedKW * 3.5 * 24);
-
+        const savedRubMonth = savedRubDay * 30;
         fanStatus = 'warn';
-        fanLabel = 'ЗИМНИЙ РАСХОД';
-        fanDesc = `Тнар = ${I.outdoorTemp}°C. Высокая плотность воздуха, резерв экономии: ~${savedKW} кВт`;
-        score -= 10;
-
+        fanLabel = winter ? 'ЗИМНИЙ РАСХОД' : 'ИЗБЫТОЧНАЯ ТЯГА';
+        fanDesc = winter
+            ? `Тнар = ${I.outdoorTemp}°C. Плотный воздух, расход ${Math.round(O.normalFlow / 1000)} тыс. нм³/ч (+${Math.round((1 / r - 1) * 100)}%), резерв ~${savedKW} кВт`
+            : `Расход ${Math.round(O.normalFlow / 1000)} тыс. нм³/ч выше проектного (разрежение ${Math.round(O.calcDraft)} Па), перерасход ~${savedKW} кВт`;
+        score -= winter ? 10 : 8;
         recs.push({
-            id: 'winter_energy_saving',
+            id: winter ? 'winter_energy_saving' : 'over_draft_saving',
             module: 'fan',
             type: 'eco',
-            title: `Зимний резерв энергосбережения (${I.outdoorTemp}°C)`,
-            reason: `Плотный морозный воздух создаёт избыточный напор. Поджатие НА сохранит разрежение и сбережет киловатты.`,
-            actionText: `Поджать НА с ${I.guideVane}% до ${optVane}%`,
-            effectText: `Экономия ~${savedKW} кВт (~${savedRubDay.toLocaleString('ru-RU')} ₽/сутки, до 1 млн ₽/мес)`,
+            title: winter ? `Зимний резерв энергосбережения (${I.outdoorTemp}°C)` : `Избыточная тяга дымососа (${Math.round(O.calcDraft)} Па)`,
+            reason: winter
+                ? `Плотный морозный воздух даёт избыточный массовый расход при том же НА. Поджатие НА сохранит проектное разрежение и сэкономит электроэнергию.`
+                : `Избыточное разрежение увеличивает подсосы и расход электроэнергии без выигрыша в очистке.`,
+            actionText: `Поджать НА с ${Math.round(I.guideVane)}% до ${vaneForRef}%`,
+            effectText: `Экономия ~${savedKW} кВт (~${savedRubDay.toLocaleString('ru-RU')} ₽/сут, ~${savedRubMonth.toLocaleString('ru-RU')} ₽/мес)`,
             apply: () => {
-                I.guideVane = optVane;
-                state.alarms.push(`✓ Советчик: НА поджат до ${optVane}% (зимняя оптимизация, экономия ${savedKW} кВт)`);
-            }
-        });
-    } else if (O.calcDraft < -280 && I.guideVane > 85) {
-        fanStatus = 'warn';
-        fanLabel = 'ИЗБЫТОЧНАЯ ТЯГА';
-        fanDesc = `Разрежение ${Math.round(O.calcDraft)} Па избыточно. Перерасход энергии на подсосах`;
-        score -= 8;
-
-        const optVane = 76;
-        recs.push({
-            id: 'over_draft_saving',
-            module: 'fan',
-            type: 'eco',
-            title: `Избыточная тяга дымососа (${Math.round(O.calcDraft)} Па)`,
-            reason: `Чрезмерное разрежение охлаждает электролизеры подсосами и ведёт к лишнему расходу электроэнергии.`,
-            actionText: `Установить НА на оптимум (${optVane}%)`,
-            effectText: 'Снижение нагрузки на двигатель, нормализация разрежения до -160 Па',
-            apply: () => {
-                I.guideVane = optVane;
-                state.alarms.push(`✓ Советчик: НА установлен на ${optVane}%`);
+                I.guideVane = vaneForRef;
+                state.alarms.push(`✓ Советчик: НА поджат до ${vaneForRef}% (экономия ~${savedKW} кВт)`);
             }
         });
     }

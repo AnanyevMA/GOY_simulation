@@ -3,6 +3,8 @@
 //  Привязка слайдеров, обновление телеметрии, Chart.js тренды, журнал алармов
 // ═══════════════════════════════════════════════════════════════════════
 
+import { config } from './model.js';
+
 let charts = {};
 let uiCallbacks = null;
 const TREND_SIZE = 60; // 60 точек (~60 сек при обновлении 1/сек)
@@ -124,7 +126,7 @@ export function syncSlidersToState(state) {
         if (lbl) lbl.textContent = `${val} ${suf}`;
     };
     sync('I-rpm',     'L-rpm',     I.fanRPM,      '%');
-    sync('I-vane',    'L-vane',    I.guideVane,    '%');
+    sync('I-vane',    'L-vane',    Math.round(I.guideVane), '%');
     sync('I-temp',    'L-temp',    I.gasTempSP,    '°C');
     sync('I-hum',     'L-hum',     I.gasHumidity,  '%');
     sync('I-draft',   'L-draft',   I.inletDraft,   'Па');
@@ -160,8 +162,8 @@ export function updateTelemetry(state, econ) {
     set('T-vel',     `${O.gasVelocity.toFixed(1)} м/с`);
     set('T-dpFilt',  `${O.avgFilterDP.toFixed(2)} кПа`, O.avgFilterDP > I.regenSP * 1.3 ? 'warn' : (O.avgFilterDP > I.regenSP * 0.8 ? 'caution' : ''));
     set('T-dpDuct',  `${(O.ductDP * 1000).toFixed(0)} Па`);
-    set('T-dpTotal', `${O.totalDP.toFixed(2)} кПа`, O.totalDP > 3.0 ? 'warn' : '');
-    set('T-amps',    `${Math.round(O.fanAmps)} А`, O.fanAmps > 350 * 0.9 ? 'warn' : '');
+    set('T-dpTotal', `${O.totalDP.toFixed(2)} кПа`, O.totalDP > 7.5 ? 'warn' : (O.totalDP > 6.0 ? 'caution' : ''));
+    set('T-amps',    `${Math.round(O.fanAmps)} А`, O.fanAmps > config.fanMaxAmps ? 'warn' : (O.fanAmps > config.fanMaxAmps * 0.85 ? 'caution' : ''));
     set('T-power',   `${Math.round(O.fanPowerKW)} кВт`);
     set('T-temp',    `${O.actualTemp.toFixed(0)} °C`, O.actualTemp > 160 ? 'warn' : (O.actualTemp > 130 ? 'caution' : ''));
 
@@ -212,6 +214,9 @@ export function updateTelemetry(state, econ) {
 
     // ── Обновление советчика APM ──
     updateAdvisorUI(state);
+
+    // Автопилот сам двигает НА/подачу/уставку — показываем это на ползунках
+    if (state.idealMode) syncSlidersToState(state);
 }
 
 // ── Рендеринг виджета советчика APM ──
@@ -249,23 +254,18 @@ function updateAdvisorUI(state) {
     const container = document.getElementById('adv-recs-container');
     if (!container) return;
 
-    if (state.idealMode) {
-        container.innerHTML = `
+    const idealBanner = state.idealMode ? `
             <div class="rec-card rec-eco">
                 <div class="rec-title"><span>✨ АВТОПИЛОТ СОВЕТЧИКА АКТИВЕН</span></div>
-                <div class="rec-reason">Система непрерывно поддерживает оптимальный баланс: тяга дымососа адаптирована под сезон, дозирование сорбента держит HF &lt; 0.3 мг/нм³, частота продувок нормирована (50–60 ц/ч).</div>
-                <div class="rec-effect">⚡ Экономия электроэнергии + нулевые штрафы</div>
-            </div>
-        `;
-        return;
-    }
+                <div class="rec-reason">НА ведёт расход к проектному, подача сорбента следит за нагрузкой по HF, уставка регенерации держит 50–60 ц/ч. Параметр, изменённый вручную, автопилот не трогает. Неисправности (рукава, шиберы) он не скрывает — их нужно устранять.</div>
+            </div>` : '';
 
     if (!adv.recommendations || adv.recommendations.length === 0) {
-        container.innerHTML = `<div class="rec-empty">✓ Техпроцесс стабилен, все 3 контура в оптимуме</div>`;
+        container.innerHTML = idealBanner || `<div class="rec-empty">✓ Техпроцесс стабилен, все 3 контура в оптимуме</div>`;
         return;
     }
 
-    container.innerHTML = adv.recommendations.map(r => `
+    container.innerHTML = idealBanner + adv.recommendations.map(r => `
         <div class="rec-card rec-${r.type}">
             <div class="rec-title">
                 <span>💡 ${r.title}</span>
@@ -332,7 +332,7 @@ export function initCharts() {
 
     charts.dp   = make('chart-dp',   'ΔP фильтра (кПа)', '#58a6ff', 2.5, 1.2);
     charts.hf   = make('chart-hf',   'HF выход (мг/нм³)', '#f85149', 2.0, 0.5);
-    charts.amps = make('chart-amps', 'Ток (А)',           '#d29922', 400);
+    charts.amps = make('chart-amps', 'Ток (А)',           '#d29922', Math.round(config.fanMaxAmps * 1.1));
 }
 
 export function updateCharts(state) {
