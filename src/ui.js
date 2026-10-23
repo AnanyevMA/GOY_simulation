@@ -1,19 +1,31 @@
 // ═══════════════════════════════════════════════════════════════════════
-//  ANTIGRAVITY СГОУ — UI MODULE
-//  Привязка слайдеров, обновление телеметрии, Chart.js тренды, журнал алармов
+//  ANTIGRAVITY СГОУ — UI MODULE v8.0
+//  Привязка органов управления, интерактивные подсказки «Физика процесса»,
+//  обновление телеметрии с пиковым детектором, Chart.js тренды, советчик APM.
 // ═══════════════════════════════════════════════════════════════════════
 
-import { config } from './model.js';
+import { config, PHYSICS_HINTS, getTornBagsInSection } from './config.js';
 
 let charts = {};
 let uiCallbacks = null;
-const TREND_SIZE = 60; // 60 точек (~60 сек при обновлении 1/сек)
+const TREND_SIZE = 60;
+
+// ── Отображение обучающей подсказки по физике параметра ──
+export function showPhysicsHint(paramKey) {
+    const hint = PHYSICS_HINTS[paramKey];
+    if (!hint) return;
+    const titleEl = document.getElementById('hint-title');
+    const formEl = document.getElementById('hint-formula');
+    const effEl = document.getElementById('hint-effect');
+    if (titleEl) titleEl.textContent = `📘 Физика: ${hint.title}`;
+    if (formEl) formEl.textContent = hint.formula;
+    if (effEl) effEl.textContent = hint.effect;
+}
 
 // ── Инициализация контролов ──
 export function initUI(state, callbacks) {
     uiCallbacks = callbacks;
 
-    // Привязка ползунков с поддержкой идеального режима
     const bind = (iid, lid, key, suf, obj, parser = parseFloat) => {
         const el = document.getElementById(iid);
         const lbl = document.getElementById(lid);
@@ -22,22 +34,31 @@ export function initUI(state, callbacks) {
             const v = parser(e.target.value);
             obj[key] = v;
             lbl.textContent = `${v} ${suf}`;
-            // В идеальном режиме: при изменении одного параметра пересчитать остальные
+            showPhysicsHint(key);
             if (callbacks.onParamChange) callbacks.onParamChange(key);
         });
     };
 
     const I = state.inputs;
-    bind('I-rpm',    'L-rpm',    'fanRPM',      '%', I, parseInt);
-    bind('I-vane',   'L-vane',   'guideVane',    '%', I, parseInt);
-    bind('I-temp',   'L-temp',   'gasTempSP',   '°C', I, parseInt);
-    bind('I-hum',    'L-hum',    'gasHumidity',  '%', I, parseInt);
-    bind('I-draft',  'L-draft',  'inletDraft',  'Па', I, parseInt);
-    bind('I-fresh',  'L-fresh',  'freshFeed',   'т/ч', I);
-    bind('I-recirc', 'L-recirc', 'recircFeed',  'т/ч', I);
-    bind('I-regenSP','L-regenSP','regenSP',     'кПа', I);
-    bind('I-timeSpeed','L-timeSpeed','timeSpeed','x', I, parseInt);
-    bind('I-outdoor', 'L-outdoor', 'outdoorTemp', '°C', I, parseInt);
+    bind('I-rpm',       'L-rpm',       'fanRPM',        '%',   I, parseInt);
+    bind('I-vane',      'L-vane',      'guideVane',     '%',   I, parseFloat);
+    bind('I-temp',      'L-temp',      'gasTempSP',     '°C',  I, parseInt);
+    bind('I-hum',       'L-hum',       'gasHumidity',   '%',   I, parseInt);
+    bind('I-draft',     'L-draft',     'inletDraft',    'Па',  I, parseInt);
+    bind('I-dilution',  'L-dilution',  'dilutionValve', '%',   I, parseInt);
+    bind('I-fresh',     'L-fresh',     'freshFeed',     'т/ч', I, parseFloat);
+    bind('I-recirc',    'L-recirc',    'recircFeed',    'т/ч', I, parseFloat);
+    bind('I-regenSP',   'L-regenSP',   'regenSP',       'кПа', I, parseFloat);
+    bind('I-timeSpeed', 'L-timeSpeed', 'timeSpeed',     'x',   I, parseInt);
+    bind('I-outdoor',   'L-outdoor',   'outdoorTemp',   '°C',  I, parseInt);
+
+    // Наведение курсора на блоки ползунков — показывает физическую формулу и описание
+    document.querySelectorAll('.sw[data-hint]').forEach(sw => {
+        sw.addEventListener('mouseenter', () => {
+            const key = sw.getAttribute('data-hint');
+            if (key) showPhysicsHint(key);
+        });
+    });
 
     // Порванные рукава (числовое поле)
     const tornEl = document.getElementById('I-torn');
@@ -62,60 +83,58 @@ export function initUI(state, callbacks) {
         }
     });
 
-    // Кнопки
+    // Кнопки продувки и порыва
     document.getElementById('btn-pulse')?.addEventListener('click', () => {
         callbacks.onForcePulse();
         const b = document.getElementById('btn-pulse');
-        b.textContent = '✓ OK'; setTimeout(() => b.textContent = '⚠ Авар. продувка', 800);
+        b.textContent = '✓ ИМПУЛЬС!';
+        setTimeout(() => { b.textContent = '⚠ Залп. продувка'; }, 800);
     });
 
     document.getElementById('btn-rupture')?.addEventListener('click', () => {
         callbacks.onBagRupture();
         const b = document.getElementById('btn-rupture');
         b.textContent = `💥 ${I.tornBags} шт!`;
-        document.getElementById('I-torn').value = I.tornBags;
-        setTimeout(() => b.textContent = '💥 Прорыв рукава', 1200);
+        const tInput = document.getElementById('I-torn');
+        if (tInput) tInput.value = I.tornBags;
+        setTimeout(() => { b.textContent = '💥 Порыв рукава'; }, 1200);
     });
 
-    // ── Кнопка «Идеальная ГОУ (Автопилот)» ──
+    // Кнопка «Идеальная ГОУ (Автопилот)»
     const idealBtn = document.getElementById('btn-ideal');
     if (idealBtn) {
         idealBtn.addEventListener('click', () => {
-            state.idealMode = !state.idealMode;
-            callbacks.onIdealToggle(state.idealMode);
+            const nextState = !state.idealMode;
+            callbacks.onIdealToggle(nextState);
             idealBtn.textContent = state.idealMode ? '✨ АВТОПИЛОТ: ВКЛЮЧЁН' : '✨ Идеальная ГОУ (Автопилот)';
             idealBtn.className = state.idealMode ? 'btn btn-ideal active' : 'btn btn-ideal';
             if (state.idealMode) syncSlidersToState(state);
         });
     }
 
-    // ── Экспресс-сценарии аномалий ──
-    document.getElementById('scen-anode')?.addEventListener('click', () => {
-        callbacks.onScenario?.('anode_effect');
-        const b = document.getElementById('scen-anode');
-        b.style.borderColor = '#f85149';
-        setTimeout(() => b.style.borderColor = '', 1500);
-    });
-
-    document.getElementById('scen-winter')?.addEventListener('click', () => {
-        callbacks.onScenario?.('winter_frost');
-        const b = document.getElementById('scen-winter');
-        b.style.borderColor = '#79c0ff';
-        setTimeout(() => b.style.borderColor = '', 1500);
-    });
-
-    document.getElementById('scen-wear')?.addEventListener('click', () => {
-        callbacks.onScenario?.('bag_wear');
-        const b = document.getElementById('scen-wear');
-        b.style.borderColor = '#d29922';
-        setTimeout(() => b.style.borderColor = '', 1500);
+    // 6 обучающих экспресс-сценариев аномалий
+    const scenarioButtons = [
+        ['scen-anode',  'anode_effect', '#f85149'],
+        ['scen-winter', 'winter_frost', '#79c0ff'],
+        ['scen-wear',   'bag_wear',     '#d29922'],
+        ['scen-feeder', 'feeder_fault', '#f85149'],
+        ['scen-wet',    'wet_blinding', '#79c0ff'],
+        ['scen-air',    'air_drop',     '#d29922'],
+    ];
+    scenarioButtons.forEach(([btnId, scenName, highlightCol]) => {
+        const btn = document.getElementById(btnId);
+        if (btn) {
+            btn.addEventListener('click', () => {
+                callbacks.onScenario?.(scenName);
+                btn.style.borderColor = highlightCol;
+                setTimeout(() => { btn.style.borderColor = ''; }, 1500);
+            });
+        }
     });
 }
 
 /**
- * syncSlidersToState() — обновляет ВСЕ ползунки и лейблы в DOM
- * на основе текущих значений state.inputs.
- * Вызывается после autoTune(), чтобы UI отражал пересчитанные значения.
+ * Синхронизирует все ползунки и поля ввода с текущими значениями state.inputs
  */
 export function syncSlidersToState(state) {
     const I = state.inputs;
@@ -125,16 +144,17 @@ export function syncSlidersToState(state) {
         if (el) el.value = val;
         if (lbl) lbl.textContent = `${val} ${suf}`;
     };
-    sync('I-rpm',     'L-rpm',     I.fanRPM,      '%');
-    sync('I-vane',    'L-vane',    Math.round(I.guideVane), '%');
-    sync('I-temp',    'L-temp',    I.gasTempSP,    '°C');
-    sync('I-hum',     'L-hum',     I.gasHumidity,  '%');
-    sync('I-draft',   'L-draft',   I.inletDraft,   'Па');
-    sync('I-fresh',   'L-fresh',   I.freshFeed,   'т/ч');
-    sync('I-recirc',  'L-recirc',  I.recircFeed,  'т/ч');
-    sync('I-regenSP', 'L-regenSP', I.regenSP,     'кПа');
-    sync('I-timeSpeed','L-timeSpeed', I.timeSpeed,'x');
-    sync('I-outdoor', 'L-outdoor', I.outdoorTemp, '°C');
+    sync('I-rpm',       'L-rpm',       I.fanRPM,               '%');
+    sync('I-vane',      'L-vane',      Math.round(I.guideVane), '%');
+    sync('I-temp',      'L-temp',      I.gasTempSP,            '°C');
+    sync('I-hum',       'L-hum',       I.gasHumidity,          '%');
+    sync('I-draft',     'L-draft',     I.inletDraft,           'Па');
+    sync('I-dilution',  'L-dilution',  I.dilutionValve,        '%');
+    sync('I-fresh',     'L-fresh',     I.freshFeed,            'т/ч');
+    sync('I-recirc',    'L-recirc',    I.recircFeed,           'т/ч');
+    sync('I-regenSP',   'L-regenSP',   I.regenSP,              'кПа');
+    sync('I-timeSpeed', 'L-timeSpeed', I.timeSpeed,            'x');
+    sync('I-outdoor',   'L-outdoor',   I.outdoorTemp,          '°C');
 
     const tornEl = document.getElementById('I-torn');
     if (tornEl) tornEl.value = I.tornBags;
@@ -147,8 +167,8 @@ export function syncSlidersToState(state) {
     });
 }
 
-// ── Обновление телеметрии ──
-export function updateTelemetry(state, econ) {
+// ── Обновление телеметрии (1 Гц) ──
+export function updateTelemetry(state, econ, peaks = null) {
     const O = state.out;
     const I = state.inputs;
     const set = (id, text, cls) => {
@@ -158,64 +178,85 @@ export function updateTelemetry(state, econ) {
         if (cls !== undefined) el.className = 'tval ' + cls;
     };
 
-    set('T-flow',    `${Math.round(O.gasFlow).toLocaleString('ru-RU')} м³/ч`);
-    set('T-vel',     `${O.gasVelocity.toFixed(1)} м/с`);
-    set('T-dpFilt',  `${O.avgFilterDP.toFixed(2)} кПа`, O.avgFilterDP > I.regenSP * 1.3 ? 'warn' : (O.avgFilterDP > I.regenSP * 0.8 ? 'caution' : ''));
+    const hfDisplay = peaks ? peaks.hfOut : O.hfOut;
+    const dustDisplay = peaks ? peaks.dustOut : O.dustOut;
+
+    set('T-flow', `${Math.round(O.normalFlow / 1000)} тыс. нм³/ч (${Math.round(O.gasFlow / 1000)} тыс. м³/ч)`);
+    set('T-vel',  `${O.gasVelocity.toFixed(1)} м/с`);
+    set(
+        'T-temp',
+        `${O.actualTemp.toFixed(0)} °C (роса ${O.dewPointTemp.toFixed(0)}°C)`,
+        O.actualTemp > 145 || O.dewPointMargin < 12 ? 'warn' : (O.actualTemp > 120 || O.dewPointMargin < 20 ? 'caution' : 'ok')
+    );
+
+    set('T-dpFilt',  `${O.avgFilterDP.toFixed(2)} кПа`, O.avgFilterDP > I.regenSP * 1.3 ? 'warn' : (O.avgFilterDP > I.regenSP * 0.9 ? 'caution' : ''));
     set('T-dpDuct',  `${(O.ductDP * 1000).toFixed(0)} Па`);
-    set('T-dpTotal', `${O.totalDP.toFixed(2)} кПа`, O.totalDP > 7.5 ? 'warn' : (O.totalDP > 6.0 ? 'caution' : ''));
-    set('T-amps',    `${Math.round(O.fanAmps)} А`, O.fanAmps > config.fanMaxAmps ? 'warn' : (O.fanAmps > config.fanMaxAmps * 0.85 ? 'caution' : ''));
-    set('T-power',   `${Math.round(O.fanPowerKW)} кВт`);
-    set('T-temp',    `${O.actualTemp.toFixed(0)} °C`, O.actualTemp > 160 ? 'warn' : (O.actualTemp > 130 ? 'caution' : ''));
+    set(
+        'T-dpTotal',
+        `${O.totalDP.toFixed(2)} кПа (тяга +${Math.round(O.stackDraft * 1000)}Па)`,
+        O.totalDP > 7.5 ? 'warn' : (O.totalDP > 6.0 ? 'caution' : '')
+    );
 
-    set('T-hfIn',    `${O.hfIn.toFixed(1)} мг/нм³`);
-    set('T-hfOut',   `${O.hfOut.toFixed(2)} мг/нм³`, O.hfOut > 1.0 ? 'warn' : (O.hfOut > 0.5 ? 'caution' : ''));
-    set('T-dustOut', `${O.dustOut.toFixed(1)} мг/нм³`, O.dustOut > 10 ? 'warn' : (O.dustOut > 5 ? 'caution' : ''));
+    set('T-amps',  `${Math.round(O.fanAmps)} А`, O.fanAmps > config.fanMaxAmps ? 'warn' : (O.fanAmps > config.fanMaxAmps * 0.85 ? 'caution' : ''));
+    set('T-power', `${Math.round(O.fanPowerKW)} кВт`);
+    set('T-airP',  `${O.receiverP.toFixed(2)} МПа`, O.receiverP < 0.36 ? 'warn' : (O.receiverP < 0.45 ? 'caution' : 'ok'));
 
-    set('T-eff1',    `${O.effReactor.toFixed(1)} %`, O.effReactor < 40 ? 'warn' : (O.effReactor < 55 ? 'caution' : 'ok'));
-    set('T-eff2',    `${O.effCake.toFixed(1)} %`,    O.effCake < 90 ? 'warn' : (O.effCake < 95 ? 'caution' : 'ok'));
-    set('T-effHF',   `${O.effHF.toFixed(1)} %`,      O.effHF < 95 ? 'warn' : (O.effHF < 98 ? 'caution' : 'ok'));
-    set('T-effDust', `${O.effDust.toFixed(1)} %`,     O.effDust < 98 ? 'warn' : 'ok');
-    set('T-fContent',`${O.fContent.toFixed(2)} wt%`,  O.fContent > 2.0 ? 'caution' : '');
-    set('T-contact', `${O.contactTime.toFixed(1)} с`,  O.contactTime < 1.5 ? 'warn' : (O.contactTime < 2.0 ? 'caution' : 'ok'));
-    set('T-vfilt',   `${(O.filtVelocity * 100).toFixed(1)} см/с`);
-    set('T-regenCycles', `${O.regenCyclesPerHour} ц/ч`, O.regenCyclesPerHour > 70 ? 'warn' : (O.regenCyclesPerHour > 60 ? 'caution' : ''));
-    set('T-draft',   `${Math.round(O.calcDraft)} Па`,  O.calcDraft > -50 ? 'warn' : (O.calcDraft > -100 ? 'caution' : 'ok'));
+    set('T-hfIn',    `${O.hfIn.toFixed(1)} мг/нм³ (${O.hfGenKgH.toFixed(1)} кг/ч)`);
+    set('T-hfOut',   `${hfDisplay.toFixed(2)} мг/нм³`, hfDisplay > 1.0 ? 'warn' : (hfDisplay > 0.5 ? 'caution' : 'ok'));
+    set('T-dustOut', `${dustDisplay.toFixed(1)} мг/нм³`, dustDisplay > 10 ? 'warn' : (dustDisplay > 5 ? 'caution' : 'ok'));
 
-    set('T-airP',    `${O.receiverP.toFixed(2)} МПа`, O.receiverP < 0.35 ? 'warn' : (O.receiverP < 0.45 ? 'caution' : 'ok'));
+    set('T-eff1',    `${O.effReactor.toFixed(1)} %`, O.effReactor < 45 ? 'warn' : (O.effReactor < 58 ? 'caution' : 'ok'));
+    set('T-eff2',    `${O.effCake.toFixed(1)} % (акт. ${(O.cakeActivity * 100).toFixed(0)}%)`, O.effCake < 95 ? 'warn' : (O.effCake < 98.5 ? 'caution' : 'ok'));
+    set('T-effHF',   `${O.effHF.toFixed(2)} %`, O.effHF < 98.5 ? 'warn' : (O.effHF < 99.6 ? 'caution' : 'ok'));
+    set('T-effDust', `${O.effDust.toFixed(2)} %`, O.effDust < 99.5 ? 'warn' : 'ok');
+    set('T-fContent', `${O.fContent.toFixed(2)} wt%`, (O.fContent > 1.75 || O.fContent < 0.45) ? 'caution' : 'ok');
+    set('T-contact', `${O.contactTime.toFixed(1)} с`, O.contactTime < 1.6 ? 'warn' : (O.contactTime < 2.0 ? 'caution' : 'ok'));
+    set('T-vfilt',   `${(O.filtVelocity * 100).toFixed(2)} см/с`);
+    set('T-regenCycles', `${O.regenCyclesPerHour} ц/ч`, O.regenCyclesPerHour > 70 ? 'warn' : (O.regenCyclesPerHour > 60 ? 'caution' : 'ok'));
+    set(
+        'T-draft',
+        `${Math.round(O.calcDraft)} Па (уст ${I.inletDraft} Па)`,
+        O.calcDraft > -50 ? 'warn' : (O.calcDraft > -100 ? 'caution' : 'ok')
+    );
 
     const stEl = document.getElementById('T-status');
-    if (stEl) { stEl.textContent = O.status; stEl.className = 'tval ' + (O.status === 'НОРМА' ? 'ok' : 'warn'); }
+    if (stEl) {
+        stEl.textContent = O.status;
+        stEl.className = 'tval ' + (O.status === 'НОРМА' ? 'ok' : 'warn');
+    }
 
-    // Секции фильтра (мини-индикаторы)
+    // Мини-индикаторы 4 секций фильтра
     state.sections.forEach((sec, i) => {
         const fl = document.getElementById('SF-' + i);
         const lb = document.getElementById('SL-' + i);
         if (!fl || !lb) return;
-        const d = Math.min(1, (sec.dp - 0.45) / (I.regenSP * 1.5 - 0.45));
+        const d = Math.min(1, Math.max(0, (sec.dp - 0.45) / (I.regenSP * 1.5 - 0.45)));
         fl.style.height = (d * 100) + '%';
+        const tornInSec = getTornBagsInSection(i, I.tornBags, config.numSections);
+        const tornMark = tornInSec > 0 ? `⚡${tornInSec}` : '';
         if (sec.isRegen) {
             fl.style.background = '#58a6ff';
-            lb.textContent = `С${i+1}↻`;
+            lb.textContent = `С${i + 1}↻${tornMark}`;
         } else {
-            const r = Math.floor(63 + 185 * d), g = Math.floor(185 * (1 - d)), b = Math.floor(80 * (1 - d));
-            fl.style.background = `rgb(${r},${g},${b})`;
-            lb.textContent = `С${i+1} ${sec.dp.toFixed(1)}`;
+            const r = Math.floor(63 + 185 * d);
+            const g = Math.floor(185 * (1 - d));
+            const b = Math.floor(80 * (1 - d));
+            fl.style.background = tornInSec > 0 ? '#f85149' : `rgb(${r},${g},${b})`;
+            lb.textContent = `С${i + 1} ${sec.dp.toFixed(1)}${tornMark}`;
         }
     });
 
     // Экономика
     if (econ) {
-        set('E-power',   `${econ.powerKW} кВт`);
-        set('E-costH',   `${econ.energyCostPerHour} ₽/ч`);
-        set('E-costS',   `${econ.energyCostShift} ₽/смена`);
-        set('E-fluorH',  `${econ.fluorLossCostH} ₽/ч`, econ.fluorLossCostH > 0 ? 'caution' : '');
-        set('E-penaltyH',`${econ.penaltyCostH} ₽/ч`, econ.isPenalty ? 'warn' : 'ok');
+        set('E-power',    `${econ.powerKW} кВт`);
+        set('E-costH',    `${econ.energyCostPerHour} ₽/ч`);
+        set('E-costS',    `${econ.energyCostShift} ₽ (${econ.energyKWH} кВт·ч)`);
+        set('E-fluorH',   `${econ.fluorLossCostH} ₽/ч`, Number(econ.fluorLossCostH) > 500 ? 'caution' : '');
+        set('E-penaltyH', `${econ.penaltyCostH} ₽/ч`, econ.isPenalty ? 'warn' : 'ok');
     }
 
-    // ── Обновление советчика APM ──
     updateAdvisorUI(state);
 
-    // Автопилот сам двигает НА/подачу/уставку — показываем это на ползунках
     if (state.idealMode) syncSlidersToState(state);
 }
 
@@ -224,7 +265,6 @@ function updateAdvisorUI(state) {
     const adv = state.advisor;
     if (!adv) return;
 
-    // 1. Индикатор здоровья
     const badgeEl = document.getElementById('adv-health-badge');
     const fillEl = document.getElementById('adv-health-fill');
     if (badgeEl && fillEl) {
@@ -239,37 +279,35 @@ function updateAdvisorUI(state) {
         fillEl.style.background = fillCol;
     }
 
-    // 2. Статусы модулей
     const updateChip = (chipId, modData) => {
         const valEl = document.getElementById(`chip-${chipId}-val`);
+        const chipBox = document.getElementById(`chip-${chipId}`);
         if (!valEl || !modData) return;
         valEl.textContent = modData.label;
         valEl.className = `mod-chip-val mod-${modData.status}`;
+        if (chipBox) chipBox.title = modData.desc || '';
     };
     updateChip('filter', adv.modules.filter);
     updateChip('alumina', adv.modules.alumina);
     updateChip('fan', adv.modules.fan);
 
-    // 3. Карточки рекомендаций
     const container = document.getElementById('adv-recs-container');
     if (!container) return;
 
     const idealBanner = state.idealMode ? `
-            <div class="rec-card rec-eco">
-                <div class="rec-title"><span>✨ АВТОПИЛОТ СОВЕТЧИКА АКТИВЕН</span></div>
-                <div class="rec-reason">НА ведёт расход к проектному, подача сорбента следит за нагрузкой по HF, уставка регенерации держит 50–60 ц/ч. Параметр, изменённый вручную, автопилот не трогает. Неисправности (рукава, шиберы) он не скрывает — их нужно устранять.</div>
-            </div>` : '';
+        <div class="rec-card rec-eco">
+            <div class="rec-title"><span>✨ АВТОПИЛОТ СОВЕТЧИКА АКТИВЕН</span></div>
+            <div class="rec-reason">НА автоматически удерживает уставку разрежения (${state.inputs.inletDraft} Па), клапан подсоса защищает фильтр от перегрева, дозаторы Al₂O₃ ведут баланс сорбции. Ручное изменение любого ползунка переводит этот контур под контроль оператора.</div>
+        </div>` : '';
 
     if (!adv.recommendations || adv.recommendations.length === 0) {
-        container.innerHTML = idealBanner || `<div class="rec-empty">✓ Техпроцесс стабилен, все 3 контура в оптимуме</div>`;
+        container.innerHTML = idealBanner || `<div class="rec-empty">✓ Техпроцесс сбалансирован, все 3 контура в технологическом оптимуме</div>`;
         return;
     }
 
     container.innerHTML = idealBanner + adv.recommendations.map(r => `
         <div class="rec-card rec-${r.type}">
-            <div class="rec-title">
-                <span>💡 ${r.title}</span>
-            </div>
+            <div class="rec-title"><span>💡 ${r.title}</span></div>
             <div class="rec-reason">${r.reason}</div>
             <div class="rec-effect">⚡ ${r.effectText}</div>
             <div class="rec-btn-row">
@@ -279,9 +317,8 @@ function updateAdvisorUI(state) {
         </div>
     `).join('');
 
-    // Привязка обработчиков на кнопки «Применить»
     container.querySelectorAll('.btn-apply-rec').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+        btn.addEventListener('click', e => {
             const recId = e.target.getAttribute('data-rec-id');
             if (uiCallbacks && uiCallbacks.onApplyRec) {
                 uiCallbacks.onApplyRec(recId);
@@ -295,32 +332,56 @@ function updateAdvisorUI(state) {
 
 // ── Chart.js тренды ──
 export function initCharts() {
-    // Проверяем наличие Chart
-    if (typeof Chart === 'undefined') { console.warn('Chart.js не загружен'); return; }
+    if (typeof Chart === 'undefined') {
+        console.warn('Chart.js не загружен');
+        return;
+    }
 
     Chart.defaults.color = '#8b949e';
     Chart.defaults.font.family = 'Consolas, monospace';
     Chart.defaults.font.size = 10;
 
-    const make = (id, label, color, sugMax, refLine) => {
+    const make = (id, label, color, sugMax, refLine, secondDataset = null) => {
         const el = document.getElementById(id);
         if (!el) return null;
         const datasets = [{
-            label, data: Array(TREND_SIZE).fill(null),
-            borderColor: color, borderWidth: 1.5, tension: 0.3, pointRadius: 0, fill: false,
+            label,
+            data: Array(TREND_SIZE).fill(null),
+            borderColor: color,
+            borderWidth: 1.5,
+            tension: 0.25,
+            pointRadius: 0,
+            fill: false,
         }];
+        if (secondDataset) {
+            datasets.push({
+                label: secondDataset.label,
+                data: Array(TREND_SIZE).fill(null),
+                borderColor: secondDataset.color,
+                borderWidth: 1.2,
+                tension: 0.25,
+                pointRadius: 0,
+                fill: false,
+            });
+        }
         if (refLine !== undefined) {
             datasets.push({
-                label: 'Уставка', data: Array(TREND_SIZE).fill(refLine),
-                borderColor: '#f8514955', borderWidth: 1, borderDash: [4, 4],
-                pointRadius: 0, fill: false,
+                label: 'ПДК/Уст',
+                data: Array(TREND_SIZE).fill(refLine),
+                borderColor: '#f8514966',
+                borderWidth: 1,
+                borderDash: [4, 4],
+                pointRadius: 0,
+                fill: false,
             });
         }
         return new Chart(el.getContext('2d'), {
             type: 'line',
             data: { labels: Array(TREND_SIZE).fill(''), datasets },
             options: {
-                responsive: true, maintainAspectRatio: false, animation: false,
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
                 scales: {
                     y: { suggestedMin: 0, suggestedMax: sugMax, grid: { color: '#21262d' } },
                     x: { display: false },
@@ -330,34 +391,43 @@ export function initCharts() {
         });
     };
 
-    charts.dp   = make('chart-dp',   'ΔP фильтра (кПа)', '#58a6ff', 2.5, 1.2);
-    charts.hf   = make('chart-hf',   'HF выход (мг/нм³)', '#f85149', 2.0, 0.5);
-    charts.amps = make('chart-amps', 'Ток (А)',           '#d29922', Math.round(config.fanMaxAmps * 1.1));
+    charts.dp   = make('chart-dp',   'ΔP фильтра (кПа)', '#58a6ff', 2.2, 1.2);
+    charts.hf   = make('chart-hf',   'HF вых (мг/нм³)',  '#f85149', 1.8, 0.5, { label: 'Пыль/10', color: '#fb923c' });
+    charts.amps = make('chart-amps', 'Ток дымососа (А)', '#d29922', Math.round(config.fanMaxAmps * 1.1), config.fanMaxAmps);
 }
 
-export function updateCharts(state) {
-    const push = (chart, val) => {
-        if (!chart) return;
-        chart.data.datasets[0].data.shift();
-        chart.data.datasets[0].data.push(val);
-        // Обновляем refline (уставку) если есть
-        if (chart.data.datasets[1]) {
-            chart.data.datasets[1].data.shift();
-            chart.data.datasets[1].data.push(chart.data.datasets[1].data[0]);
-        }
-        chart.update('none'); // 'none' = без анимации
-    };
-    push(charts.dp,   state.out.avgFilterDP);
-    push(charts.hf,   state.out.hfOut);
-    push(charts.amps, state.out.fanAmps);
+export function updateCharts(state, peaks = null) {
+    const hfVal = peaks ? peaks.hfOut : state.out.hfOut;
+    const dustVal = peaks ? peaks.dustOut : state.out.dustOut;
 
-    // Обновляем линию уставки ΔP
-    if (charts.dp && charts.dp.data.datasets[1]) {
-        charts.dp.data.datasets[1].data = Array(TREND_SIZE).fill(state.inputs.regenSP);
+    if (charts.dp) {
+        charts.dp.data.datasets[0].data.shift();
+        charts.dp.data.datasets[0].data.push(state.out.avgFilterDP);
+        if (charts.dp.data.datasets[1]) {
+            charts.dp.data.datasets[1].data = Array(TREND_SIZE).fill(state.inputs.regenSP);
+        }
+        charts.dp.update('none');
+    }
+
+    if (charts.hf) {
+        charts.hf.data.datasets[0].data.shift();
+        charts.hf.data.datasets[0].data.push(hfVal);
+        // Вторая линия на графике эмиссии — Пыль / 10 (где ПДК 5 мг/нм³ = 0.5 на шкале, совпадает с линией ПДК!)
+        if (charts.hf.data.datasets[1]) {
+            charts.hf.data.datasets[1].data.shift();
+            charts.hf.data.datasets[1].data.push(dustVal / 10);
+        }
+        charts.hf.update('none');
+    }
+
+    if (charts.amps) {
+        charts.amps.data.datasets[0].data.shift();
+        charts.amps.data.datasets[0].data.push(state.out.fanAmps);
+        charts.amps.update('none');
     }
 }
 
-// ── Журнал алармов ──
+// ── Журнал технологических событий и алармов ──
 let alarmLog = [];
 const MAX_ALARMS = 50;
 
@@ -369,12 +439,15 @@ export function processAlarms(alarms) {
 
     alarms.forEach(msg => {
         const entry = `[${now}] ${msg}`;
-        alarmLog.unshift(entry);
+        // Избегаем дублирования одинаковых сообщений подряд
+        if (alarmLog[0] !== entry) {
+            alarmLog.unshift(entry);
+        }
     });
     if (alarmLog.length > MAX_ALARMS) alarmLog.length = MAX_ALARMS;
 
     logEl.innerHTML = alarmLog.map(e => {
-        const isWarn = e.includes('⚠') || e.includes('🔥') || e.includes('💥');
+        const isWarn = e.includes('⚠') || e.includes('🔥') || e.includes('💥') || e.includes('⛔');
         return `<div class="alarm-entry${isWarn ? ' alarm-warn' : ''}">${e}</div>`;
     }).join('');
 }

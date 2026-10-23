@@ -31,11 +31,17 @@ jobs:
 
       - name: Syntax check JS modules
         run: |
+          node -c src/config.js
+          node -c src/advisor.js
           node -c src/model.js
           node -c src/renderer.js
           node -c src/ui.js
           node -c src/economics.js
           node -c src/app.js
+
+      - name: Verify Physics Engine & Advisor Simulation
+        run: |
+          node --input-type=module -e "import { state, tick, triggerScenario } from './src/model.js'; for(let i=0; i<60; i++) tick(); if (isNaN(state.out.normalFlow) || state.out.normalFlow <= 0) throw new Error('Invalid flow'); console.log('✓ Physics engine verified: Qn =', Math.round(state.out.normalFlow), 'Nm3/h, HF =', state.out.hfOut.toFixed(3), 'mg/Nm3'); triggerScenario('anode'); for(let i=0; i<10; i++) tick(); console.log('✓ APM Scenario verified: Health =', state.advisor.healthIndex);"
 
   deploy:
     name: Deploy to Pages

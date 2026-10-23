@@ -1,21 +1,29 @@
 // ═══════════════════════════════════════════════════════════════════════
-//  ANTIGRAVITY СГОУ — ОРКЕСТРАТОР (ES6 Entry Point)
-//  Связывает model, renderer, ui, economics.
-//  Физика: 10 тиков/сек. Рендер: 60 FPS. Тренды: 1/сек.
+//  ANTIGRAVITY СГОУ — ОРКЕСТРАТОР v8.0 (ES6 Entry Point)
+//  Связывает model, advisor, config, renderer, ui, economics.
+//  Физика: 10 Гц × timeSpeed. Рендер: 60 FPS. Тренды/Телеметрия: 1 Гц (с Peak Hold).
 // ═══════════════════════════════════════════════════════════════════════
 
-import { state, config, tick, forcePulseAll, addTornBag, setIdealMode, autoTune, triggerScenario, applyRecommendation } from './model.js';
+import {
+    state,
+    config,
+    tick,
+    forcePulseAll,
+    addTornBag,
+    setIdealMode,
+    autoTune,
+    triggerScenario,
+    applyRecommendation,
+    consumePeakMetrics,
+} from './model.js';
 import { initRenderer, render, burstDust } from './renderer.js';
 import { initUI, updateTelemetry, initCharts, updateCharts, processAlarms, syncSlidersToState } from './ui.js';
 import { calcEconomics } from './economics.js';
 
-// ── Инициализация ──
 document.addEventListener('DOMContentLoaded', () => {
-    // Canvas
     const cv = document.getElementById('cv');
     initRenderer(cv);
 
-    // UI контролы
     initUI(state, {
         onForcePulse: () => forcePulseAll(),
         onBagRupture: () => { addTornBag(); burstDust(); },
@@ -28,7 +36,6 @@ document.addEventListener('DOMContentLoaded', () => {
             applyRecommendation(recId);
             syncSlidersToState(state);
         },
-        // При изменении любого параметра в идеальном режиме → пересчёт
         onParamChange: (paramName) => {
             if (state.idealMode) {
                 autoTune(paramName);
@@ -37,10 +44,14 @@ document.addEventListener('DOMContentLoaded', () => {
         },
     });
 
-    // Chart.js тренды
     initCharts();
 
-    // ── Физическая симуляция (10 Гц базовая, ускоряется) ──
+    // Начальный тик для немедленного отображения телеметрии при старте
+    tick();
+    syncSlidersToState(state);
+    updateTelemetry(state, calcEconomics(state.out, 0), consumePeakMetrics());
+
+    // ── Физическая симуляция (10 Гц базовая, ускоряется ползунком timeSpeed) ──
     setInterval(() => {
         const speed = state.inputs.timeSpeed || 1;
         for (let i = 0; i < speed; i++) {
@@ -49,12 +60,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }, 100);
 
-    // ── Обновление телеметрии и трендов (1 Гц) ──
+    // ── Обновление телеметрии и трендов (1 Гц с пиковым детектором регенерации) ──
     setInterval(() => {
         const speed = state.inputs.timeSpeed || 1;
+        const peaks = consumePeakMetrics();
         const econ = calcEconomics(state.out, speed / 60);
-        updateTelemetry(state, econ);
-        updateCharts(state);
+        updateTelemetry(state, econ, peaks);
+        updateCharts(state, peaks);
     }, 1000);
 
     // ── Рендер Canvas (60 FPS) ──
@@ -64,5 +76,5 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     requestAnimationFrame(renderLoop);
 
-    console.log('🏭 ANTIGRAVITY СГОУ Digital Twin v4.0 — запущен');
+    console.log('🏭 ANTIGRAVITY СГОУ Digital Twin v8.0 — запущен');
 });

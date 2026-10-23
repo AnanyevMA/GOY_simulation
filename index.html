@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Цифровой двойник СГОУ — Antigravity v7.1</title>
-    <meta name="description" content="Интерактивная 2D-симуляция сухой газоочистной установки алюминиевого завода">
+    <title>Цифровой двойник СГОУ — Antigravity v8.0</title>
+    <meta name="description" content="Интерактивная физическая 2D-симуляция сухой газоочистной установки алюминиевого завода">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <style>
         /* ════════════════════════════════════════════════════════════════
-         *  SCADA DARK THEME v4.0
+         *  SCADA DARK THEME v8.0
          * ════════════════════════════════════════════════════════════════ */
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -32,7 +32,7 @@
 
         /* ── Панель (правая часть) ── */
         .panel {
-            flex: 3; min-width: 320px; max-width: 400px;
+            flex: 3; min-width: 340px; max-width: 420px;
             height: 100%; display: flex; flex-direction: column;
             background: linear-gradient(180deg, #0f1318, #161b22);
             overflow-y: auto; padding: 10px; gap: 8px;
@@ -59,8 +59,10 @@
             margin-bottom: 3px; font-family: 'Consolas', monospace; font-size: 11px;
         }
         .tlbl { color: #8b949e; }
-        .tval { font-weight: 700; font-size: 12px; color: #58a6ff; }
-        .tval.ok { color: #3fb950; } .tval.warn { color: #f85149; animation: blink 1.2s infinite; } .tval.caution { color: #d29922; }
+        .tval { font-weight: 700; font-size: 11.5px; color: #58a6ff; }
+        .tval.ok { color: #3fb950; }
+        .tval.warn { color: #f85149; animation: blink 1.2s infinite; }
+        .tval.caution { color: #d29922; }
         .sep { border-top: 1px solid #21262d; margin: 3px 0; }
 
         /* ── Слайдеры ── */
@@ -106,7 +108,7 @@
         .pipe-item input { width: 100%; }
 
         /* ── Графики (тренды) ── */
-        .chart-wrap { height: 80px; position: relative; }
+        .chart-wrap { height: 78px; position: relative; }
         .chart-wrap canvas { width: 100% !important; height: 100% !important; }
 
         /* ── Журнал алармов ── */
@@ -127,23 +129,23 @@
         .econ-val { font-weight: 700; color: #3fb950; }
 
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.5} }
-        .footer { font-size: 7px; color: #30363d; text-align: center; padding-top: 4px; flex-shrink: 0; }
+        .footer { font-size: 7px; color: #484f58; text-align: center; padding-top: 4px; flex-shrink: 0; }
 
         /* ── Кнопка «Идеальная ГОУ» ── */
         .btn-ideal {
-            width: 100%; padding: 10px; font-size: 12px;
+            width: 100%; padding: 9px; font-size: 11px;
             background: linear-gradient(180deg, #1a1a2e, #16213e); color: #8b949e;
             border: 1px solid #30363d; cursor: pointer; text-transform: uppercase;
-            letter-spacing: 2px; transition: all 0.3s;
+            letter-spacing: 1.5px; transition: all 0.3s;
         }
         .btn-ideal:hover { border-color: #fbbf24; color: #fbbf24; }
         .btn-ideal.active {
             background: linear-gradient(180deg, #3a2a00, #1a1200);
             border-color: #fbbf24; color: #fbbf24;
             box-shadow: 0 0 15px rgba(251, 191, 36, 0.25), inset 0 0 20px rgba(251, 191, 36, 0.05);
-            animation: idealPulse 2s infinite;
         }
-        /* ── Экспресс-сценарии аномалий ── */
+
+        /* ── Экспресс-сценарии аномалий (6 сценариев) ── */
         .scenarios-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-top: 4px; }
         .btn-scen {
             padding: 5px 3px; font-size: 8px; font-weight: 700; border-radius: 4px;
@@ -155,6 +157,20 @@
         .btn-scen.btn-fire:hover { border-color: #f85149; color: #f85149; }
         .btn-scen.btn-cold:hover { border-color: #79c0ff; color: #79c0ff; }
         .btn-scen.btn-wear:hover { border-color: #d29922; color: #d29922; }
+
+        /* ── Интерактивная карточка обучения («Физика процесса») ── */
+        .hint-box {
+            background: linear-gradient(135deg, #0d1520, #0d1117);
+            border: 1px solid #1f3a5f; border-left: 3px solid #58a6ff;
+            border-radius: 5px; padding: 6px 8px; font-size: 9px;
+        }
+        .hint-title { font-weight: 700; color: #79c0ff; margin-bottom: 2px; font-size: 9.5px; }
+        .hint-formula {
+            font-family: 'Consolas', monospace; color: #fbbf24; font-size: 9px;
+            background: rgba(251,191,36,0.08); padding: 2px 5px; border-radius: 3px;
+            margin-bottom: 3px; display: inline-block;
+        }
+        .hint-effect { color: #8b949e; line-height: 1.25; }
 
         /* ── Советчик APM ── */
         .advisor-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
@@ -180,7 +196,7 @@
         .mod-warn { color: #d29922; }
         .mod-danger { color: #f85149; }
 
-        .recs-container { display: flex; flex-direction: column; gap: 5px; max-height: 190px; overflow-y: auto; }
+        .recs-container { display: flex; flex-direction: column; gap: 5px; max-height: 195px; overflow-y: auto; }
         .recs-container::-webkit-scrollbar { width: 3px; }
         .recs-container::-webkit-scrollbar-thumb { background: #30363d; }
         .rec-card {
@@ -211,112 +227,25 @@
 
 <!-- ═══════ ПАНЕЛЬ УПРАВЛЕНИЯ ═══════ -->
 <div class="panel">
-    <div class="panel-header">АСУ ТП · СГОУ</div>
+    <div class="panel-header">АСУ ТП · СГОУ v8.0</div>
 
     <!-- ─── ИДЕАЛЬНАЯ ГОУ ─── -->
     <button class="btn btn-ideal" id="btn-ideal">✨ Идеальная ГОУ (Автопилот)</button>
 
-    <!-- ─── ДЕМО-СЦЕНАРИИ АНОМАЛИЙ ─── -->
+    <!-- ─── ДЕМО-СЦЕНАРИИ АНОМАЛИЙ (6 СЦЕНАРИЕВ) ─── -->
     <div class="box">
-        <div class="box-title">🎯 Экспресс-сценарии аномалий</div>
+        <div class="box-title">🎯 Обучающие сценарии аномалий</div>
         <div class="scenarios-grid">
-            <button class="btn-scen btn-fire" id="scen-anode">🔥 Анод-эффект</button>
-            <button class="btn-scen btn-cold" id="scen-winter">❄ Мороз -30°C</button>
-            <button class="btn-scen btn-wear" id="scen-wear">🔍 Износ рукавов</button>
+            <button class="btn-scen btn-fire" id="scen-anode" title="Залповый выброс HF (3.5×) и перегрев газа (+55°C)">🔥 Анод-эффект</button>
+            <button class="btn-scen btn-cold" id="scen-winter" title="Зимний мороз -32°C: рост плотности, самотяги и тока">❄ Мороз -32°C</button>
+            <button class="btn-scen btn-wear" id="scen-wear" title="Порыв 3 рукавов: прострелы пыли и HF при продувке">🔍 Порыв рукавов</button>
+            <button class="btn-scen btn-fire" id="scen-feeder" title="Остановка подачи свежего глинозёма: истощение пирога и проскок HF">⛔ Отказ дозатора</button>
+            <button class="btn-scen btn-cold" id="scen-wet" title="Высокая влажность 18% и точка росы: залипание рукавов">💧 Сырой пирог</button>
+            <button class="btn-scen btn-wear" id="scen-air" title="Падение давления сжатого воздуха в ресивере до 0.29 МПа">🌬 Срыв продувки</button>
         </div>
     </div>
 
-    <!-- ─── ТЕЛЕМЕТРИЯ ─── -->
-    <div class="box">
-        <div class="box-title">Телеметрия</div>
-        <div class="trow"><span class="tlbl">Расход газа</span><span id="T-flow" class="tval">—</span></div>
-        <div class="trow"><span class="tlbl">Скорость газохода</span><span id="T-vel" class="tval">—</span></div>
-        <div class="trow"><span class="tlbl">Т° газа (факт.)</span><span id="T-temp" class="tval">—</span></div>
-        <div class="sep"></div>
-        <div class="trow"><span class="tlbl">ΔP фильтра</span><span id="T-dpFilt" class="tval">—</span></div>
-        <div class="trow"><span class="tlbl">ΔP газоходов</span><span id="T-dpDuct" class="tval">—</span></div>
-        <div class="trow"><span class="tlbl">ΔP общее</span><span id="T-dpTotal" class="tval">—</span></div>
-        <div class="sep"></div>
-        <div class="trow"><span class="tlbl">Ток дымососа</span><span id="T-amps" class="tval">—</span></div>
-        <div class="trow"><span class="tlbl">Мощность</span><span id="T-power" class="tval">—</span></div>
-        <div class="trow"><span class="tlbl">Ресивер воздуха</span><span id="T-airP" class="tval ok">—</span></div>
-        <div class="sep"></div>
-        <div class="trow"><span class="tlbl">HF вход</span><span id="T-hfIn" class="tval">—</span></div>
-        <div class="trow"><span class="tlbl">HF выход</span><span id="T-hfOut" class="tval">—</span></div>
-        <div class="trow"><span class="tlbl">Пыль выход</span><span id="T-dustOut" class="tval">—</span></div>
-        <div class="sep"></div>
-        <div class="trow"><span class="tlbl">η₁ реактор</span><span id="T-eff1" class="tval ok">—</span></div>
-        <div class="trow"><span class="tlbl">η₂ пирог</span><span id="T-eff2" class="tval ok">—</span></div>
-        <div class="trow"><span class="tlbl">η HF общая</span><span id="T-effHF" class="tval ok">—</span></div>
-        <div class="trow"><span class="tlbl">η пыль</span><span id="T-effDust" class="tval ok">—</span></div>
-        <div class="trow"><span class="tlbl">F в глинозёме</span><span id="T-fContent" class="tval">—</span></div>
-        <div class="trow"><span class="tlbl">τ контакта</span><span id="T-contact" class="tval ok">—</span></div>
-        <div class="trow"><span class="tlbl">V фильтрации</span><span id="T-vfilt" class="tval">—</span></div>
-        <div class="trow"><span class="tlbl">Циклы реген./ч</span><span id="T-regenCycles" class="tval">—</span></div>
-        <div class="sep"></div>
-        <div class="trow"><span class="tlbl">Разрежение (расч.)</span><span id="T-draft" class="tval ok">—</span></div>
-        <div class="sep"></div>
-        <div class="trow"><span class="tlbl">Статус</span><span id="T-status" class="tval ok">НОРМА</span></div>
-    </div>
-
-    <!-- ─── СЕКЦИИ ФИЛЬТРА ─── -->
-    <div class="box">
-        <div class="box-title">Секции фильтра (ΔP)</div>
-        <div class="sec-row">
-            <div class="sec-ind"><div class="sec-fill" id="SF-0"></div><div class="sec-lbl" id="SL-0">С1</div></div>
-            <div class="sec-ind"><div class="sec-fill" id="SF-1"></div><div class="sec-lbl" id="SL-1">С2</div></div>
-            <div class="sec-ind"><div class="sec-fill" id="SF-2"></div><div class="sec-lbl" id="SL-2">С3</div></div>
-            <div class="sec-ind"><div class="sec-fill" id="SF-3"></div><div class="sec-lbl" id="SL-3">С4</div></div>
-        </div>
-    </div>
-
-    <!-- ─── ДЫМОСОС ─── -->
-    <div class="box">
-        <div class="box-title">Дымосос</div>
-        <div class="sw"><div class="sw-head"><span>Обороты (RPM)</span><span class="sw-val" id="L-rpm">100 %</span></div><input type="range" id="I-rpm" min="0" max="100" value="100"></div>
-        <div class="sw"><div class="sw-head"><span>Направляющий аппарат (НА)</span><span class="sw-val" id="L-vane">80 %</span></div><input type="range" id="I-vane" min="5" max="100" value="80"></div>
-    </div>
-
-    <!-- ─── ГАЗОВЫЙ ТРАКТ ─── -->
-    <div class="box">
-        <div class="box-title">Газовый тракт</div>
-        <div class="sw"><div class="sw-head"><span>Температура газа (SP)</span><span class="sw-val" id="L-temp">110 °C</span></div><input type="range" id="I-temp" min="80" max="200" value="110"></div>
-        <div class="sw"><div class="sw-head"><span>Влажность</span><span class="sw-val" id="L-hum">5 %</span></div><input type="range" id="I-hum" min="0" max="20" value="5"></div>
-        <div class="sw"><div class="sw-head"><span>Разрежение газохода</span><span class="sw-val" id="L-draft">-150 Па</span></div><input type="range" id="I-draft" min="-400" max="0" value="-150"></div>
-        <div class="sw"><div class="sw-head"><span>Т наружного воздуха</span><span class="sw-val" id="L-outdoor">20 °C</span></div><input type="range" id="I-outdoor" min="-40" max="40" value="20"></div>
-    </div>
-
-    <!-- ─── ШИБЕРЫ ТРУБ ─── -->
-    <div class="box">
-        <div class="box-title">Шиберы газоходов (4 трубы)</div>
-        <div class="pipe-grid">
-            <div class="pipe-item"><span>1A: <b id="L-pipe-1A">100%</b></span><input type="range" id="I-pipe-1A" min="0" max="100" value="100"></div>
-            <div class="pipe-item"><span>1B: <b id="L-pipe-1B">100%</b></span><input type="range" id="I-pipe-1B" min="0" max="100" value="100"></div>
-            <div class="pipe-item"><span>2A: <b id="L-pipe-2A">100%</b></span><input type="range" id="I-pipe-2A" min="0" max="100" value="100"></div>
-            <div class="pipe-item"><span>2B: <b id="L-pipe-2B">100%</b></span><input type="range" id="I-pipe-2B" min="0" max="100" value="100"></div>
-        </div>
-    </div>
-
-    <!-- ─── ГЛИНОЗЁМ ─── -->
-    <div class="box">
-        <div class="box-title">Подача глинозёма</div>
-        <div class="sw"><div class="sw-head"><span>Свежий Al₂O₃</span><span class="sw-val" id="L-fresh">5.0 т/ч</span></div><input type="range" id="I-fresh" min="0" max="10" step="0.1" value="5.0"></div>
-        <div class="sw"><div class="sw-head"><span>Рецирк. Al₂O₃·AlF₃</span><span class="sw-val" id="L-recirc">20 т/ч</span></div><input type="range" id="I-recirc" min="0" max="40" step="0.5" value="20"></div>
-    </div>
-
-    <!-- ─── ФИЛЬТР / АВАРИИ ─── -->
-    <div class="box">
-        <div class="box-title">Фильтр / Регенерация / Аварии</div>
-        <div class="sw"><div class="sw-head"><span>Уставка авто-продувки ΔP</span><span class="sw-val" id="L-regenSP">1.2 кПа</span></div><input type="range" id="I-regenSP" min="0.8" max="2.0" step="0.05" value="1.2"></div>
-        <div class="sw" style="margin-top:8px;"><div class="sw-head"><span>Скорость симуляции</span><span class="sw-val" id="L-timeSpeed">1x</span></div><input type="range" id="I-timeSpeed" min="1" max="10" step="1" value="1"></div>
-        <div class="trow" style="margin-top:8px;"><span class="tlbl">Порвано рукавов</span><input type="number" class="num-input" id="I-torn" min="0" max="100" value="0"></div>
-        <div class="btn-row">
-            <button class="btn btn-green" id="btn-pulse">⚠ Авар. продувка</button>
-            <button class="btn btn-red" id="btn-rupture">💥 Прорыв рукава</button>
-        </div>
-    </div>
-
-    <!-- ─── СОВЕТЧИК ОПЕРАТОРА И ПРЕДИКТИВКА (APM v7.1) ─── -->
+    <!-- ─── СОВЕТЧИК ОПЕРАТОРА И ПРЕДИКТИВКА (APM v8.0) ─── -->
     <div class="box" id="advisor-box">
         <div class="advisor-header">
             <span class="box-title" style="margin-bottom:0; border:none; color:#58a6ff;">🧠 Советчик APM</span>
@@ -336,19 +265,117 @@
                 <div class="mod-chip-val mod-ok" id="chip-alumina-val">В НОРМЕ</div>
             </div>
             <div class="mod-chip" id="chip-fan">
-                <div class="mod-chip-title">Дымосос / Сезон</div>
+                <div class="mod-chip-title">Дымосос / Тяга</div>
                 <div class="mod-chip-val mod-ok" id="chip-fan-val">В НОРМЕ</div>
             </div>
         </div>
 
         <div class="recs-container" id="adv-recs-container">
-            <div class="rec-empty">✓ Техпроцесс стабилен, отклонений не выявлено</div>
+            <div class="rec-empty">✓ Техпроцесс стабилен, все 3 контура в оптимуме</div>
+        </div>
+    </div>
+
+    <!-- ─── СПРАВКА: ФИЗИКА ПРОЦЕССА (ДЛЯ ОБУЧЕНИЯ) ─── -->
+    <div class="hint-box" id="physics-hint-box">
+        <div class="hint-title" id="hint-title">📘 Физика процесса: Направляющий аппарат (НА)</div>
+        <div class="hint-formula" id="hint-formula">Q_max ∝ α,  P_max ∝ α^1.5,  N_эл ∝ Q^2.5</div>
+        <div class="hint-effect" id="hint-effect">Наведите курсор или измените любой ползунок, чтобы увидеть физическую формулу и цепочку взаимосвязей в реальном времени.</div>
+    </div>
+
+    <!-- ─── ТЕЛЕМЕТРИЯ ─── -->
+    <div class="box">
+        <div class="box-title">Телеметрия процесса</div>
+        <div class="trow"><span class="tlbl">Расход (норм / факт)</span><span id="T-flow" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">Скорость в газоходе</span><span id="T-vel" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">Т° реактора / Т° росы</span><span id="T-temp" class="tval">—</span></div>
+        <div class="sep"></div>
+        <div class="trow"><span class="tlbl">ΔP фильтра</span><span id="T-dpFilt" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">ΔP газоходов</span><span id="T-dpDuct" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">ΔP тракта (самотяга)</span><span id="T-dpTotal" class="tval">—</span></div>
+        <div class="sep"></div>
+        <div class="trow"><span class="tlbl">Ток дымососа (ном 190А)</span><span id="T-amps" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">Мощность на валу/эл.</span><span id="T-power" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">Ресивер сжатого возд.</span><span id="T-airP" class="tval ok">—</span></div>
+        <div class="sep"></div>
+        <div class="trow"><span class="tlbl">HF вход в реактор</span><span id="T-hfIn" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">HF выход (ПДК 0.5)</span><span id="T-hfOut" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">Пыль выход (ПДК 5.0)</span><span id="T-dustOut" class="tval">—</span></div>
+        <div class="sep"></div>
+        <div class="trow"><span class="tlbl">η₁ реактор Вентури</span><span id="T-eff1" class="tval ok">—</span></div>
+        <div class="trow"><span class="tlbl">η₂ пирог (активность)</span><span id="T-eff2" class="tval ok">—</span></div>
+        <div class="trow"><span class="tlbl">η HF общая</span><span id="T-effHF" class="tval ok">—</span></div>
+        <div class="trow"><span class="tlbl">η пыль</span><span id="T-effDust" class="tval ok">—</span></div>
+        <div class="trow"><span class="tlbl">F во втор. глинозёме</span><span id="T-fContent" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">τ контакта в реакторе</span><span id="T-contact" class="tval ok">—</span></div>
+        <div class="trow"><span class="tlbl">V фильтрации рукавов</span><span id="T-vfilt" class="tval">—</span></div>
+        <div class="trow"><span class="tlbl">Циклы регенерации</span><span id="T-regenCycles" class="tval">—</span></div>
+        <div class="sep"></div>
+        <div class="trow"><span class="tlbl">Разрежение укрытий</span><span id="T-draft" class="tval ok">—</span></div>
+        <div class="sep"></div>
+        <div class="trow"><span class="tlbl">Статус установки</span><span id="T-status" class="tval ok">НОРМА</span></div>
+    </div>
+
+    <!-- ─── СЕКЦИИ ФИЛЬТРА ─── -->
+    <div class="box">
+        <div class="box-title">Секции фильтра (ΔP кПа и порывы)</div>
+        <div class="sec-row">
+            <div class="sec-ind"><div class="sec-fill" id="SF-0"></div><div class="sec-lbl" id="SL-0">С1</div></div>
+            <div class="sec-ind"><div class="sec-fill" id="SF-1"></div><div class="sec-lbl" id="SL-1">С2</div></div>
+            <div class="sec-ind"><div class="sec-fill" id="SF-2"></div><div class="sec-lbl" id="SL-2">С3</div></div>
+            <div class="sec-ind"><div class="sec-fill" id="SF-3"></div><div class="sec-lbl" id="SL-3">С4</div></div>
+        </div>
+    </div>
+
+    <!-- ─── ДЫМОСОС ─── -->
+    <div class="box">
+        <div class="box-title">Дымосос (1600 кВт, 6 кВ)</div>
+        <div class="sw" data-hint="fanRPM"><div class="sw-head"><span>Обороты (RPM)</span><span class="sw-val" id="L-rpm">100 %</span></div><input type="range" id="I-rpm" min="0" max="100" value="100"></div>
+        <div class="sw" data-hint="guideVane"><div class="sw-head"><span>Направляющий аппарат (НА)</span><span class="sw-val" id="L-vane">69 %</span></div><input type="range" id="I-vane" min="5" max="100" value="69"></div>
+    </div>
+
+    <!-- ─── ГАЗОВЫЙ ТРАКТ ─── -->
+    <div class="box">
+        <div class="box-title">Газовый тракт и климат</div>
+        <div class="sw" data-hint="gasTempSP"><div class="sw-head"><span>Т° газов из корпусов</span><span class="sw-val" id="L-temp">105 °C</span></div><input type="range" id="I-temp" min="80" max="200" value="105"></div>
+        <div class="sw" data-hint="gasHumidity"><div class="sw-head"><span>Влажность газа</span><span class="sw-val" id="L-hum">5 %</span></div><input type="range" id="I-hum" min="0" max="20" value="5"></div>
+        <div class="sw" data-hint="inletDraft"><div class="sw-head"><span>Уставка разрежения корпусов</span><span class="sw-val" id="L-draft">-150 Па</span></div><input type="range" id="I-draft" min="-400" max="-50" value="-150"></div>
+        <div class="sw" data-hint="dilutionValve"><div class="sw-head"><span>Клапан подсоса воздуха</span><span class="sw-val" id="L-dilution">0 %</span></div><input type="range" id="I-dilution" min="0" max="100" value="0"></div>
+        <div class="sw" data-hint="outdoorTemp"><div class="sw-head"><span>Т° наружного воздуха</span><span class="sw-val" id="L-outdoor">20 °C</span></div><input type="range" id="I-outdoor" min="-40" max="40" value="20"></div>
+    </div>
+
+    <!-- ─── ШИБЕРЫ ТРУБ ─── -->
+    <div class="box">
+        <div class="box-title">Шиберы газоходов от корпусов (4 ветви)</div>
+        <div class="pipe-grid">
+            <div class="pipe-item"><span>1A: <b id="L-pipe-1A">100%</b></span><input type="range" id="I-pipe-1A" min="0" max="100" value="100"></div>
+            <div class="pipe-item"><span>1B: <b id="L-pipe-1B">100%</b></span><input type="range" id="I-pipe-1B" min="0" max="100" value="100"></div>
+            <div class="pipe-item"><span>2A: <b id="L-pipe-2A">100%</b></span><input type="range" id="I-pipe-2A" min="0" max="100" value="100"></div>
+            <div class="pipe-item"><span>2B: <b id="L-pipe-2B">100%</b></span><input type="range" id="I-pipe-2B" min="0" max="100" value="100"></div>
+        </div>
+    </div>
+
+    <!-- ─── ГЛИНОЗЁМ ─── -->
+    <div class="box">
+        <div class="box-title">Дозирование глинозёма</div>
+        <div class="sw" data-hint="freshFeed"><div class="sw-head"><span>Свежий Al₂O₃</span><span class="sw-val" id="L-fresh">5.5 т/ч</span></div><input type="range" id="I-fresh" min="0" max="10" step="0.1" value="5.5"></div>
+        <div class="sw" data-hint="recircFeed"><div class="sw-head"><span>Рецирк. Al₂O₃·AlF₃</span><span class="sw-val" id="L-recirc">22.0 т/ч</span></div><input type="range" id="I-recirc" min="0" max="40" step="0.5" value="22.0"></div>
+    </div>
+
+    <!-- ─── ФИЛЬТР / АВАРИИ ─── -->
+    <div class="box">
+        <div class="box-title">Фильтр / Регенерация / Рукава</div>
+        <div class="sw" data-hint="regenSP"><div class="sw-head"><span>Уставка авто-продувки ΔP</span><span class="sw-val" id="L-regenSP">1.20 кПа</span></div><input type="range" id="I-regenSP" min="0.8" max="2.0" step="0.05" value="1.20"></div>
+        <div class="sw" style="margin-top:8px;"><div class="sw-head"><span>Скорость времени симуляции</span><span class="sw-val" id="L-timeSpeed">1x</span></div><input type="range" id="I-timeSpeed" min="1" max="10" step="1" value="1"></div>
+        <div class="trow" style="margin-top:8px;"><span class="tlbl">Порвано рукавов (из 800)</span><input type="number" class="num-input" id="I-torn" min="0" max="100" value="0"></div>
+        <div class="btn-row">
+            <button class="btn btn-green" id="btn-pulse">⚠ Залп. продувка</button>
+            <button class="btn btn-red" id="btn-rupture">💥 Порыв рукава</button>
         </div>
     </div>
 
     <!-- ─── ТРЕНДЫ (Chart.js) ─── -->
     <div class="box">
-        <div class="box-title">Тренды</div>
+        <div class="box-title">Тренды (с пиковым детектором регенерации)</div>
         <div class="chart-wrap"><canvas id="chart-dp"></canvas></div>
         <div class="chart-wrap"><canvas id="chart-hf"></canvas></div>
         <div class="chart-wrap"><canvas id="chart-amps"></canvas></div>
@@ -359,19 +386,19 @@
         <div class="box-title">💰 Экономика смены</div>
         <div class="econ-row"><span class="econ-lbl">Мощность дымососа</span><span class="econ-val" id="E-power">—</span></div>
         <div class="econ-row"><span class="econ-lbl">Энергозатраты</span><span class="econ-val" id="E-costH">—</span></div>
-        <div class="econ-row"><span class="econ-lbl">За смену (8ч)</span><span class="econ-val" id="E-costS">—</span></div>
+        <div class="econ-row"><span class="econ-lbl">Накоплено за смену</span><span class="econ-val" id="E-costS">—</span></div>
         <div class="sep"></div>
-        <div class="econ-row"><span class="econ-lbl">Потери фтора</span><span class="econ-val" id="E-fluorH">—</span></div>
-        <div class="econ-row"><span class="econ-lbl">Экол. штрафы</span><span class="econ-val" id="E-penaltyH">—</span></div>
+        <div class="econ-row"><span class="econ-lbl">Потери фтора (AlF₃)</span><span class="econ-val" id="E-fluorH">—</span></div>
+        <div class="econ-row"><span class="econ-lbl">Экол. штрафы (HF+Пыль)</span><span class="econ-val" id="E-penaltyH">—</span></div>
     </div>
 
     <!-- ─── ЖУРНАЛ АЛАРМОВ ─── -->
     <div class="box">
-        <div class="box-title">📋 Журнал алармов</div>
-        <div class="alarm-box" id="alarm-log"><div class="alarm-entry" style="color:#3fb950;">[System] Симулятор запущен</div></div>
+        <div class="box-title">📋 Журнал технологических событий</div>
+        <div class="alarm-box" id="alarm-log"><div class="alarm-entry" style="color:#3fb950;">[System] Цифровой двойник СГОУ v8.0 запущен</div></div>
     </div>
 
-    <div class="footer">Antigravity Digital Twin v7.1 · APM Советчик · ES6 модули · НДТ · см. README.md</div>
+    <div class="footer">Antigravity Digital Twin v8.0 · Полная физическая модель · APM Советчик · НДТ</div>
 </div>
 
 <!-- ═══════ ES6 МОДУЛИ ═══════ -->
