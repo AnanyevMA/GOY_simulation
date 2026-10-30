@@ -8,3 +8,7 @@ scratch/
 
 # Notes
 talk.txt
+
+# Node / сборка
+node_modules/
+_site/
