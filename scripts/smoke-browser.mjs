@@ -90,6 +90,24 @@ check((await page.textContent('#alarm-log')).includes('×'), 'журнал пр�
 const fps = await page.evaluate(() => new Promise(res => { let n = 0; const t0 = performance.now(); (function f() { n++; performance.now() - t0 > 2000 ? res(n / 2) : requestAnimationFrame(f); })(); }));
 check(fps > 25, `FPS при ускорении 10×: ${fps.toFixed(0)}`);
 
+// 6. Раскладка: карточка «Физика процесса» стоит ПОД схемой (и её легендой) и целиком видна на типовых экранах
+for (const [w, h] of [[1920, 1080], [1366, 768], [1280, 720]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(250);
+    const g = await page.evaluate(() => {
+        const c = document.getElementById('cv').getBoundingClientRect();
+        const hb = document.getElementById('physics-hint-box').getBoundingClientRect();
+        return { cBottom: c.bottom, cW: c.width, hTop: hb.top, hBottom: hb.bottom, hLeft: hb.left, cLeft: c.left, hW: hb.width, vh: innerHeight, sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth };
+    });
+    check(g.hTop >= g.cBottom - 0.5, `${w}×${h}: карточка подсказки начинается под схемой (${g.hTop.toFixed(0)} ≥ ${g.cBottom.toFixed(0)})`);
+    check(g.hBottom <= g.vh + 0.5, `${w}×${h}: карточка целиком в окне (${g.hBottom.toFixed(0)} ≤ ${g.vh})`);
+    check(Math.abs(g.hLeft - g.cLeft) < 1 && Math.abs(g.hW - g.cW) < 1, `${w}×${h}: карточка совпадает по ширине со схемой`);
+    check(g.sw <= g.cw, `${w}×${h}: нет горизонтальной прокрутки`);
+}
+await page.setViewportSize({ width: 1500, height: 950 });
+await page.hover('[data-hint="regenSP"]');
+check((await page.textContent('#hint-live')).includes('Сейчас'), 'в карточке есть строка «Сейчас: …» с живыми значениями');
+
 if (process.argv[2]) await page.screenshot({ path: process.argv[2] });
 check(errors.length === 0, `консоль без ошибок и предупреждений ${errors.length ? JSON.stringify(errors) : ''}`);
 check(failedReq.length === 0, `нет сетевых сбоев ${failedReq.length ? JSON.stringify(failedReq) : ''}`);
