@@ -1,51 +1,72 @@
-name: Deploy Digital Twin to GitHub Pages
+name: CI and Deploy Digital Twin to GitHub Pages
 
 on:
   push:
     branches: ["main"]
+  pull_request:
+    branches: ["main"]
   workflow_dispatch:
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+# Минимальные права по умолчанию; для публикации Pages они повышаются только в job deploy.
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
 
 jobs:
   test:
-    name: Verify Code Syntax
+    name: Syntax, physics and UI-hint tests (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    concurrency:
+      group: ci-${{ github.workflow }}-${{ github.ref }}-node${{ matrix.node }}
+      cancel-in-progress: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js ${{ matrix.node }}
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node }}
 
-      - name: Syntax check JS modules
-        run: |
-          node -c src/config.js
-          node -c src/advisor.js
-          node -c src/model.js
-          node -c src/renderer.js
-          node -c src/ui.js
-          node -c src/economics.js
-          node -c src/app.js
+      - name: Syntax check of all ES modules (src/*.js)
+        run: npm run check
 
-      - name: Verify Physics Engine & Advisor Simulation
+      - name: Vendored Chart.js is present
+        run: test -s vendor/chart.umd.js
+
+      - name: Tests (physics balances, fuzz, advisor/autopilot, economics, hints, alarms)
+        run: npm test
+
+      - name: Smoke - design point and every advisor scenario
         run: |
-          node --input-type=module -e "import { state, tick, triggerScenario } from './src/model.js'; for(let i=0; i<60; i++) tick(); if (isNaN(state.out.normalFlow) || state.out.normalFlow <= 0) throw new Error('Invalid flow'); console.log('✓ Physics engine verified: Qn =', Math.round(state.out.normalFlow), 'Nm3/h, HF =', state.out.hfOut.toFixed(3), 'mg/Nm3'); triggerScenario('anode'); for(let i=0; i<10; i++) tick(); console.log('✓ APM Scenario verified: Health =', state.advisor.healthIndex);"
+          node --input-type=module -e "
+          import { state, tick, triggerScenario } from './src/model.js';
+          for (let i = 0; i < 600; i++) tick();
+          const O = state.out;
+          if (!Number.isFinite(O.normalFlow) || O.normalFlow < 200000 || O.normalFlow > 240000) throw new Error('Qn out of design range: ' + O.normalFlow);
+          console.log('✓ design point: Qn =', Math.round(O.normalFlow), 'Nm3/h, HF =', O.hfOut.toFixed(3), 'mg/Nm3, P =', Math.round(O.fanPowerKW), 'kW');
+          for (const name of ['anode_effect', 'winter_frost', 'bag_wear', 'feeder_fault', 'wet_blinding', 'air_drop']) {
+            triggerScenario(name);
+            if (state.advisor.activeScenario !== name) throw new Error('scenario not started: ' + name);
+            for (let i = 0; i < 200; i++) tick();
+            if (!Number.isFinite(state.out.hfOut) || !Number.isFinite(state.advisor.healthIndex)) throw new Error('NaN after scenario ' + name);
+            console.log('✓ scenario', name, '→ health =', state.advisor.healthIndex, ', HF =', state.out.hfOut.toFixed(2));
+          }"
 
   deploy:
     name: Deploy to Pages
     needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: "pages"
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -54,13 +75,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Assemble static site (only what the browser needs)
+        run: |
+          mkdir -p _site
+          cp -r index.html src vendor _site/
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: '_site'
 
       - name: Deploy to GitHub Pages
         id: deployment

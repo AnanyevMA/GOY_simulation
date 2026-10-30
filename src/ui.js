@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════
-//  ANTIGRAVITY СГОУ — UI MODULE v8.0
+//  ANTIGRAVITY СГОУ — UI MODULE v8.1
 //  Привязка органов управления, интерактивные подсказки «Физика процесса»,
 //  обновление телеметрии с пиковым детектором, Chart.js тренды, советчик APM.
 // ═══════════════════════════════════════════════════════════════════════
@@ -11,6 +11,10 @@ let uiCallbacks = null;
 const TREND_SIZE = 60;
 
 // ── Отображение обучающей подсказки по физике параметра ──
+function clampInt(v, lo, hi) {
+    return Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : 0));
+}
+
 export function showPhysicsHint(paramKey) {
     const hint = PHYSICS_HINTS[paramKey];
     if (!hint) return;
@@ -53,18 +57,22 @@ export function initUI(state, callbacks) {
     bind('I-outdoor',   'L-outdoor',   'outdoorTemp',   '°C',  I, parseInt);
 
     // Наведение курсора на блоки ползунков — показывает физическую формулу и описание
-    document.querySelectorAll('.sw[data-hint]').forEach(sw => {
-        sw.addEventListener('mouseenter', () => {
-            const key = sw.getAttribute('data-hint');
+    document.querySelectorAll('[data-hint]').forEach(el => {
+        const show = () => {
+            const key = el.getAttribute('data-hint');
             if (key) showPhysicsHint(key);
-        });
+        };
+        el.addEventListener('mouseenter', show);
+        el.addEventListener('focusin', show);          // подсказка и при навигации с клавиатуры / тач-фокусе
+        el.addEventListener('touchstart', show, { passive: true });
     });
 
     // Порванные рукава (числовое поле)
     const tornEl = document.getElementById('I-torn');
     if (tornEl) {
         tornEl.addEventListener('input', e => {
-            I.tornBags = Math.max(0, parseInt(e.target.value) || 0);
+            I.tornBags = clampInt(parseInt(e.target.value), 0, config.totalBags);
+            showPhysicsHint('tornBags');
             if (callbacks.onParamChange) callbacks.onParamChange('tornBags');
         });
     }
@@ -78,6 +86,7 @@ export function initUI(state, callbacks) {
                 const v = parseInt(e.target.value);
                 I.pipes[i].damper = v;
                 lbl.textContent = `${v}%`;
+                showPhysicsHint('pipesDamper');
                 if (callbacks.onParamChange) callbacks.onParamChange('pipes');
             });
         }
@@ -198,10 +207,15 @@ export function updateTelemetry(state, econ, peaks = null) {
     );
 
     set('T-amps',  `${Math.round(O.fanAmps)} А`, O.fanAmps > config.fanMaxAmps ? 'warn' : (O.fanAmps > config.fanMaxAmps * 0.85 ? 'caution' : ''));
-    set('T-power', `${Math.round(O.fanPowerKW)} кВт`);
+    set('T-power', `${Math.round(O.fanPowerKW)} кВт (η вент. ${(O.fanEff * 100).toFixed(0)}%)`);
     set('T-airP',  `${O.receiverP.toFixed(2)} МПа`, O.receiverP < 0.36 ? 'warn' : (O.receiverP < 0.45 ? 'caution' : 'ok'));
 
     set('T-hfIn',    `${O.hfIn.toFixed(1)} мг/нм³ (${O.hfGenKgH.toFixed(1)} кг/ч)`);
+    set(
+        'T-capture',
+        `${(O.captureEff * 100).toFixed(1)} % (в корпус ${O.hfFugitiveKgH.toFixed(1)} кг/ч)`,
+        O.captureEff < 0.9 ? 'warn' : (O.captureEff < 0.97 ? 'caution' : 'ok')
+    );
     set('T-hfOut',   `${hfDisplay.toFixed(2)} мг/нм³`, hfDisplay > 1.0 ? 'warn' : (hfDisplay > 0.5 ? 'caution' : 'ok'));
     set('T-dustOut', `${dustDisplay.toFixed(1)} мг/нм³`, dustDisplay > 10 ? 'warn' : (dustDisplay > 5 ? 'caution' : 'ok'));
 
@@ -250,7 +264,7 @@ export function updateTelemetry(state, econ, peaks = null) {
     if (econ) {
         set('E-power',    `${econ.powerKW} кВт`);
         set('E-costH',    `${econ.energyCostPerHour} ₽/ч`);
-        set('E-costS',    `${econ.energyCostShift} ₽ (${econ.energyKWH} кВт·ч)`);
+        set('E-costS',    `${econ.energyCostShift} ₽ (${econ.energyKWH} кВт·ч · ${econ.shiftHours}/8 ч)`);
         set('E-fluorH',   `${econ.fluorLossCostH} ₽/ч`, Number(econ.fluorLossCostH) > 500 ? 'caution' : '');
         set('E-penaltyH', `${econ.penaltyCostH} ₽/ч`, econ.isPenalty ? 'warn' : 'ok');
     }
@@ -428,26 +442,46 @@ export function updateCharts(state, peaks = null) {
 }
 
 // ── Журнал технологических событий и алармов ──
-let alarmLog = [];
 const MAX_ALARMS = 50;
+let alarmLog = [];
+
+const escapeHtml = (t) => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/** Ключ группировки: текст сообщения без чисел (чтобы «Секция 1 (ΔP=1.29)» и «Секция 3 (ΔP=1.31)» слились). */
+export function alarmKey(msg) {
+    return String(msg).replace(/[0-9]+([.,][0-9]+)?/g, '#');
+}
+
+/**
+ * Чистая функция группировки: подряд идущие сообщения одного типа сворачиваются в одну строку «×N»
+ * (при ускорении 10× журнал иначе вытесняет важные события сотнями одинаковых «Авто-продувок»).
+ * @returns {Array<{key,msg,time,count}>} новый журнал (новые сверху, не длиннее MAX_ALARMS)
+ */
+export function groupAlarms(log, alarms, timeLabel, max = MAX_ALARMS) {
+    const out = log.map(e => ({ ...e }));
+    for (const msg of alarms) {
+        const key = alarmKey(msg);
+        if (out.length && out[0].key === key) {
+            out[0].count++;
+            out[0].msg = msg;
+            out[0].time = timeLabel;
+        } else {
+            out.unshift({ key, msg, time: timeLabel, count: 1 });
+        }
+    }
+    if (out.length > max) out.length = max;
+    return out;
+}
 
 export function processAlarms(alarms) {
     if (!alarms || alarms.length === 0) return;
-    const now = new Date().toLocaleTimeString('ru-RU');
     const logEl = document.getElementById('alarm-log');
     if (!logEl) return;
-
-    alarms.forEach(msg => {
-        const entry = `[${now}] ${msg}`;
-        // Избегаем дублирования одинаковых сообщений подряд
-        if (alarmLog[0] !== entry) {
-            alarmLog.unshift(entry);
-        }
-    });
-    if (alarmLog.length > MAX_ALARMS) alarmLog.length = MAX_ALARMS;
+    alarmLog = groupAlarms(alarmLog, alarms, new Date().toLocaleTimeString('ru-RU'));
 
     logEl.innerHTML = alarmLog.map(e => {
-        const isWarn = e.includes('⚠') || e.includes('🔥') || e.includes('💥') || e.includes('⛔');
-        return `<div class="alarm-entry${isWarn ? ' alarm-warn' : ''}">${e}</div>`;
+        const isWarn = /[⚠🔥💥⛔]/u.test(e.msg);
+        const cnt = e.count > 1 ? ` <span class="alarm-count">×${e.count}</span>` : '';
+        return `<div class="alarm-entry${isWarn ? ' alarm-warn' : ''}">[${escapeHtml(e.time)}] ${escapeHtml(e.msg)}${cnt}</div>`;
     }).join('');
 }

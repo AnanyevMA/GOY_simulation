@@ -1,0 +1,15 @@
+{
+  "name": "goy-simulation",
+  "version": "8.1.0",
+  "description": "Цифровой двойник СГОУ (сухой газоочистки алюминиевого завода): физика, советчик APM, автопилот, Canvas-визуализация",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": { "node": ">=20.11" },
+  "scripts": {
+    "check": "node scripts/check-syntax.mjs",
+    "test": "node --test",
+    "verify": "npm run check && npm test",
+    "serve": "python3 -m http.server 8080"
+  }
+}

@@ -1,13 +1,20 @@
 // ═══════════════════════════════════════════════════════════════════════
-//  ANTIGRAVITY СГОУ — ФИЗИЧЕСКИЙ ДВИЖОК v8.0
+//  ANTIGRAVITY СГОУ — ФИЗИЧЕСКИЙ ДВИЖОК v8.1
 //  Честная аэродинамика (дымосос + самотяга трубы ∩ параллельные ветви),
 //  физическое разрежение укрытий vs уставка, клапан подсоса, точка росы и
 //  цементация пирога, динамическая активность сорбента в пироге (cakeActivity),
 //  зависимость η₂ от скорости фильтрации v_f, посекционная локализация
 //  порывов рукавов и пиковый детектор (Peak Hold) для трендов 1 Гц.
+//  v8.1: точка росы по Магнусу, замкнутый баланс фтора (захват укрытием →
+//  труба / корпус), температура сорбции через константы скорости, ΔP ткани ∝ v,
+//  КПД дымососа по характеристике, укрытие и шибер как последовательные
+//  сопротивления, очередь алармов и посекционный прострел при залповой продувке.
 // ═══════════════════════════════════════════════════════════════════════
 
-import { config, IDEAL, PHYSICS_HINTS, clamp, getTornBagsInSection } from './config.js';
+import {
+    config, IDEAL, PHYSICS_HINTS, clamp, getTornBagsInSection,
+    SIM_DT_H, dewPointC, sorptionTempFactor, captureEfficiency,
+} from './config.js';
 import {
     runPredictiveDiagnostics as runAPM,
     autopilotStep,
@@ -17,7 +24,7 @@ import {
     applyRecommendation as advisorApplyRec,
 } from './advisor.js';
 
-export { config, IDEAL, PHYSICS_HINTS, getTornBagsInSection };
+export { config, IDEAL, PHYSICS_HINTS, getTornBagsInSection, SIM_DT_H };
 
 // ── Мутабельное состояние симуляции ──
 export const state = {
@@ -68,7 +75,7 @@ export const state = {
         peakHfOut:         0,       // Пиковый детектор HF между опросами UI (1 Гц)
     },
 
-    // Состояние интеллектуального советчика (APM v8.0)
+    // Состояние интеллектуального советчика (APM v8.1)
     advisor: {
         healthIndex:  100,
         healthStatus: 'ОТЛИЧНО',
@@ -88,10 +95,12 @@ export const state = {
         potroomFlow:        220000, // Нормальный расход газов именно от корпусов электролиза (нм³/ч)
         dilutionFlow:       0,      // Подсос воздуха через клапан перед реактором (нм³/ч)
         dilutionFrac:       0,      // Доля разбавления холодным воздухом перед реактором
+        stackFlow:          0,      // Расход на всасе дымососа с учётом подсосов (нм³/ч)
         gasVelocity:        11.0,   // Скорость газа в сборном газоходе (м/с)
         filtVelocity:       0.017,  // Скорость фильтрации через ткань рукавов (м/с)
         fanAmps:            0,      // Ток электродвигателя дымососа (А)
         fanPowerKW:         0,      // Электрическая мощность дымососа (кВт)
+        fanEff:             0.75,   // Текущий КПД дымососа (по характеристике Q/Q_max и углу НА)
         avgFilterDP:        0,      // Средний перепад ΔP рукавного фильтра (кПа)
         ductDP:             0,      // Потери давления в газоходах Дарси-Вейсбаха (кПа)
         totalDP:            0,      // Полное сопротивление тракта (кПа)
@@ -100,7 +109,10 @@ export const state = {
         hfIn:               0,      // Концентрация HF на входе в реактор (мг/нм³)
         hfOut:              0,      // Концентрация HF в трубе на выходе (мг/нм³)
         peakHfDisplay:      0,      // Пиковое значение HF с учётом прострелов регенерации (мг/нм³)
-        hfGenKgH:           0,      // Массовая генерация HF от электролизёров (кг/ч)
+        hfGenKgH:           0,      // HF, захваченный укрытиями и поступивший в газоход (кг/ч)
+        hfTotalGenKgH:      0,      // Полная генерация HF электролизёрами (кг/ч)
+        hfFugitiveKgH:      0,      // HF, ушедший в корпус из-за недостаточного разрежения (кг/ч)
+        captureEff:         1,      // Средняя доля захвата газов укрытиями (0..1)
         dustOut:            0,      // Концентрация пыли на выходе (мг/нм³)
         peakDustDisplay:    0,      // Пиковое значение пыли с учётом прострелов регенерации (мг/нм³)
         effReactor:         0,      // КПД 1-й ступени — реактора Вентури η₁ (%)
@@ -151,7 +163,9 @@ export function tick() {
     const P = state.phys;
     const O = state.out;
     P.tickCount++;
-    state.alarms = [];
+    if (state.alarms.length > 500) state.alarms.splice(0, state.alarms.length - 500);
+    // state.alarms — исходящая очередь: её опустошает drainAlarms() (UI), а не tick(),
+    // иначе сообщения от действий оператора терялись бы до первого чтения.
     O.pulseFlash = [false, false, false, false];
 
     // ── 1. ТЕПЛООБМЕН В ГАЗОХОДЕ, ПОДСОС ХОЛОДНОГО ВОЗДУХА И ТОЧКА РОСЫ ──
@@ -183,8 +197,8 @@ export function tick() {
     O.actualTemp = P.actualTemp;
     const T = P.actualTemp;
 
-    // Точка росы (зависит от влажности и присутствия кислых газов HF/SO₂)
-    O.dewPointTemp = 52 + 1.9 * I.gasHumidity;
+    // Точка росы: давление пара по Магнусу (H — объёмная доля H₂O, %) + поправка на кислые газы HF/SO₂
+    O.dewPointTemp = dewPointC(I.gasHumidity);
     O.dewPointMargin = T - O.dewPointTemp;
 
     // ── 2. ПЛОТНОСТИ ГАЗА, ТЕМПЕРАТУРНЫЕ ФАКТОРЫ И САМОТЯГА ДЫМОВОЙ ТРУБЫ ──
@@ -212,12 +226,19 @@ export function tick() {
     const n = I.fanRPM / 100;
     const alpha = I.guideVane / 100;
 
-    // Нелинейная расходная характеристика дисковых шиберов 4 труб: g_i = (d_i/100)^1.35
-    const pipeConductances = I.pipes.map(p => Math.pow(clamp(p.damper / 100, 0, 1), 1.35));
+    // Ветвь i = укрытие корпуса (подсос воздуха, k_hood) + дисковый шибер (k_damp = k₀/g²) ПОСЛЕДОВАТЕЛЬНО:
+    //   ΔP_коллектора = (k_hood + k₀/g²)·q²,  g = (d/100)^1.35  →  G = 1/√(h + (1−h)/g²),  G(100%) = 1.
+    // Доля укрытия h выводится из проектных данных: h = |P_укрытия| / ΔP_ветви = 150 Па / 300 Па = 0.5.
+    const hoodShare = clamp(Math.abs(C.refDraft) / (C.pipeDP * 1000), 0.05, 0.95);
+    const pipeConductances = I.pipes.map(p => {
+        const g = Math.pow(clamp(p.damper / 100, 0, 1), 1.35);
+        return g > 1e-6 ? 1 / Math.sqrt(hoodShare + (1 - hoodShare) / (g * g)) : 0;
+    });
     const G_pipes = pipeConductances.reduce((s, g) => s + g, 0);
 
-    // Проводимость ветви клапана аварийного подсоса перед реактором
-    const G_dil = 1.15 * Math.pow(clamp(I.dilutionValve / 100, 0, 1), 1.15);
+    // Проводимость ветви клапана подсоса: при 100% пропускает долю maxDilutionFrac от общего потока
+    const G_dilMax = C.numPipes * C.maxDilutionFrac / (1 - C.maxDilutionFrac);
+    const G_dil = G_dilMax * Math.pow(clamp(I.dilutionValve / 100, 0, 1), 1.15);
     const G_total = G_pipes + G_dil;
 
     // Посекционный учёт порванных рукавов
@@ -237,13 +258,17 @@ export function tick() {
 
     const cakeCoef = visc * coldBlind * humF * tornReduction * regenAreaFactor;
     const avgW = state.sections.reduce((a, s) => a + s.cakeMass, 0) / C.numSections;
-    const bF = C.cakeResistance * avgW * cakeCoef / 1000 * tf / (3600 * C.filterArea);
+    // Линейная по расходу часть ΔP фильтра: пирог (K·W·v_f) + чистая ткань (Дарси: ΔP ∝ v_f)
+    const tfRef = (C.refTemp + 273) / 273;
+    const bCake = C.cakeResistance * avgW * cakeCoef / 1000 * tf / (3600 * C.filterArea);
+    const bFabric = C.baseDP * visc * tf / (C.refFlow * tfRef);
+    const bF = bCake + bFabric;
 
     // Квадратичные потери давления: газоходы, реактор, параллельные ветви всаса, выходной тракт
     const vPerQ = tf / (3600 * C.ductArea);
     const aDuct = C.ductFriction * (C.ductLength / C.ductDiameter) * rhoGas * 0.5 * vPerQ * vPerQ / 1000;
     const q2 = 1 / (C.refFlow * C.refFlow);
-    const pipeMult = G_total > 0.0005 ? Math.pow(4 / G_total, 2) : 1e6;
+    const pipeMult = G_total > 0.0005 ? Math.pow(C.numPipes / G_total, 2) : 1e6;
     const aQ = aDuct + (C.reactorDP + C.pipeDP * pipeMult) * sT * q2 + C.otherDP * sTfan * q2;
 
     // ── 4. РАБОЧАЯ ТОЧКА «ДЫМОСОС + САМОТЯГА ТРУБЫ ∩ ХАРАКТЕРИСТИКА СЕТИ» ──
@@ -252,9 +277,9 @@ export function tick() {
     const effectivePmax = Pmax + stackDraftBonus;
 
     let Qn = 0;
-    if (Qmax > 1 && effectivePmax > C.baseDP && G_total > 0.0005) {
+    if (Qmax > 1 && effectivePmax > 0 && G_total > 0.0005) {
         const A = aQ + Pmax / (Qmax * Qmax);
-        const disc = bF * bF + 4 * A * (effectivePmax - C.baseDP);
+        const disc = bF * bF + 4 * A * effectivePmax;
         if (disc > 0) {
             Qn = Math.max(0, (-bF + Math.sqrt(disc)) / (2 * A));
         }
@@ -269,6 +294,7 @@ export function tick() {
     O.gasVelocity = (O.gasFlow / 3600) / C.ductArea;
     O.filtVelocity = (O.gasFlow / 3600) / C.filterArea;
     const vf = O.filtVelocity;
+    const vfRef = (C.refFlow * tfRef / 3600) / C.filterArea;   // скорость фильтрации в проектной точке (~1.69 см/с)
 
     const qr2 = (Qn * Qn) * q2;
     O.ductDP = aDuct * Qn * Qn;
@@ -279,20 +305,22 @@ export function tick() {
     // ── 5. РАСПРЕДЕЛЕНИЕ ПОТОКОВ ПО 4 ТРУБАМ И ФИЗИЧЕСКОЕ РАЗРЕЖЕНИЕ ПОД УКРЫТИЯМИ ──
     // Разрежение в каждом корпусе определяется фактическим расходом через данную ветвь:
     // P_draft,i = -150 Па · sT · (q_i / q_ном)^2. Закон сохранения массы: Σ q_i = O.potroomFlow.
-    const qRefPipe = C.refFlow / 4;
+    const qRefPipe = C.refFlow / C.numPipes;
     O.pipeFlows.forEach((pf, i) => {
         const g = pipeConductances[i];
         pf.flow = G_pipes > 0.0005 ? O.potroomFlow * (g / G_pipes) : 0;
         const r = pf.flow / qRefPipe;
         pf.draft = C.refDraft * sT * r * r;
-        pf.fugitive = Math.abs(pf.draft) < 50;
+        pf.fugitive = Math.abs(pf.draft) < C.fugitiveAlarmPa;
         pf.id = I.pipes[i].id;
     });
     O.calcDraft = O.pipeFlows.reduce((a, p) => a + p.draft, 0) / O.pipeFlows.length;
 
     // ── 6. ГЕНЕРАЦИЯ HF И ПЫЛИ ОТ ЭЛЕКТРОЛИЗЁРОВ ──
     const hfNom = C.hfGenFactor * C.potroomCurrent;
-    let hfTempFactor = potGasTemp > 135 ? 1 + (potGasTemp - 135) * 0.045 : 1.0;
+    // Генерация HF электролизом не зависит от уставки температуры газов (T — следствие, а не причина);
+    // рост выделения даёт только анодный эффект.
+    let hfTempFactor = 1.0;
 
     if (P.anodeEffectTimer > 0) {
         const surgeRatio = P.anodeEffectTimer / 200;
@@ -304,17 +332,24 @@ export function tick() {
         }
     }
 
-    // Доля газа, реально захваченная из корпусов (при выбивании часть HF уходит под фонарь цеха, но концентрация в трубе высокая)
-    const captureRatio = O.potroomFlow > 0 ? clamp(O.potroomFlow / (C.refFlow * 0.35), 0.2, 1.0) : 0;
-    const hfGen = hfNom * Math.min(4.5, hfTempFactor) * captureRatio;
-    const dustGen = C.dustGenFactor * C.potroomCurrent * captureRatio;
+    // Захват укрытиями: каждая ветвь обслуживает 1/numPipes корпусов; доля газа, попавшая в газоход,
+    // растёт с разрежением под укрытием. Остаток уходит в корпус (неорганизованный выброс) и замыкает баланс F.
+    const hfLoad = Math.min(4.5, hfTempFactor);
+    const hfTotal = hfNom * hfLoad;
+    const captureEff = O.pipeFlows.reduce((a, pf) => a + captureEfficiency(pf.draft), 0) / O.pipeFlows.length;
+    const hfGen = hfTotal * captureEff;
+    const dustGen = C.dustGenFactor * C.potroomCurrent * captureEff;
+    O.captureEff = captureEff;
+    O.hfTotalGenKgH = hfTotal;
     O.hfGenKgH = hfGen;
-    O.hfGenLoad = hfNom > 0 ? (hfNom * Math.min(4.5, hfTempFactor)) / hfNom : 1;
+    O.hfFugitiveKgH = hfTotal - hfGen;
+    O.hfGenLoad = hfLoad;
     O.hfIn = Qn > 100 ? (hfGen * 1e6) / Qn : 0;
 
     // ── 7. ДВУХСТУПЕНЧАТАЯ ХЕМОСОРБЦИЯ HF (РЕАКТОР ВЕНТУРИ η₁ + АКТИВНЫЙ ПИРОГ η₂) ──
-    // Температурный фактор десорбции при T > 118°C
-    const tempPenalty = T > 118 ? Math.exp(-0.014 * (T - 118)) : 1.0;
+    // Температурный фактор сорбции при T > 118°C: уменьшает КОНСТАНТЫ скорости/ёмкости в показателе экспоненты
+    // (а не обрезает предельный КПД), поэтому при 125–135°C система ещё держит ≥99% улавливания.
+    const tempK = sorptionTempFactor(T);
     // Умеренная влажность улучшает хемосорбцию HF на поверхности Al₂O₃
     const humBonus = 1.0 + clamp(I.gasHumidity, 0, 14) * 0.002;
     // Время контакта в реакторе Вентури
@@ -334,7 +369,7 @@ export function tick() {
     const suspensionFactor = 0.88 + 0.12 * clamp(recircRatio / 3.0, 0, 1);
 
     // Ступень 1: Реактор Вентури (η₁)
-    let eta1 = C.maxReactorEff * (1 - Math.exp(-C.reactorK * sorbRatio)) * tempPenalty * contactF * humBonus * satF * suspensionFactor;
+    let eta1 = C.maxReactorEff * (1 - Math.exp(-C.reactorK * sorbRatio * tempK)) * contactF * humBonus * satF * suspensionFactor;
     eta1 = clamp(eta1, 0, C.maxReactorEff);
 
     // Динамика химической активности пирога на рукавах (cakeActivity):
@@ -353,12 +388,11 @@ export function tick() {
     //  • массы пирога avgW (тонкий пирог при низкой уставке ΔP → канальный проскок),
     //  • скорости фильтрации vf (выше скорость → меньше время контакта газа в слое пирога),
     //  • химической активности пирога P.cakeActivity (истощается при отказе дозаторов Al₂O₃).
-    const vfRef = (C.refFlow * ((C.refTemp + 273) / 273) / 3600) / C.filterArea; // ~0.0169 м/с
     const vfFactor = vf > 0.002 ? Math.pow(vfRef / vf, 0.65) : 1.0;
     const cRatio = Math.pow(Math.max(0.1, avgW / 3.0), 0.90);
     const loadF = Math.sqrt(Math.max(0.5, O.hfGenLoad));
     const cakeLambda = C.cakeK * cRatio * vfFactor * Math.pow(P.cakeActivity, 1.85) / loadF;
-    let eta2 = C.maxCakeEff * (1 - Math.exp(-cakeLambda)) * tempPenalty * satF;
+    let eta2 = C.maxCakeEff * (1 - Math.exp(-cakeLambda * tempK)) * satF;
     eta2 = clamp(eta2, 0, C.maxCakeEff);
 
     // Проскок через порванные рукава (байпас газовой фазы мимо пирога)
@@ -370,7 +404,9 @@ export function tick() {
     O.effReactor = eta1 * 100;
     O.effCake = eta2 * 100;
     O.effHF = effTotal * 100;
-    let currentHfOut = O.hfIn * slipFrac;
+    // Концентрация в трубе: газ после фильтра разбавляется конструктивными подсосами (falseAirFrac)
+    const stackDil = 1 - C.falseAirFrac;
+    let currentHfOut = O.hfIn * slipFrac * stackDil;
 
     // ── 8. ДИНАМИЧЕСКАЯ МОДЕЛЬ ПЫЛИ И ДИАГНОСТИЧЕСКИЕ ПИКИ ПРИ ПРОДУВКЕ ──
     const totalMassIn = dustGen + (I.freshFeed + I.recircFeed) * 1000; // кг/ч
@@ -378,7 +414,7 @@ export function tick() {
     const cakeEtaDust = 0.99990 + 0.00008 * (1 - Math.exp(-avgW / 0.5));
     const dustBase = dustLoading * (1 - cakeEtaDust);
     const dustTorn = dustLoading * tornFrac * C.tornDustLeak;
-    let dustTotal = Qn > 100 ? dustBase + dustTorn : 0;
+    let dustTotal = Qn > 100 ? (dustBase + dustTorn) * stackDil : 0;
     O.effDust = dustLoading > 0 ? clamp(100 * (1 - dustTotal / dustLoading), 0, 99.9999) : 100;
 
     // Диагностический прострел пыли и HF при импульсной регенерации секции с порванными рукавами
@@ -417,9 +453,12 @@ export function tick() {
     const effectiveResidualCake = C.residualCake + Math.max(0, 1 - wetStickiness) * 1.4;
     const sectionDP = (W, secTorn) => {
         const secTornRed = clamp(1 - (secTorn / C.bagsPerSection) * 1.6, 0.50, 1.0);
-        return C.baseDP + (C.cakeResistance * vf * W * visc * coldBlind * humF * secTornRed) / 1000;
+        const fabricDP = C.baseDP * visc * (vf / vfRef);       // чистая ткань: закон Дарси, ΔP ∝ v_f
+        return fabricDP + (C.cakeResistance * vf * W * visc * coldBlind * humF * secTornRed) / 1000;
     };
 
+    let pulsedThisTick = false;
+    let pulsedTorn = 0;     // порванных рукавов в секциях, продутых именно в этом тике (все секции, не только последняя)
     state.sections.forEach((sec, i) => {
         if (sec.isRegen) {
             if (sec.regenTimer === sec.regenTimerMax) {
@@ -427,27 +466,41 @@ export function tick() {
                 const removed = blowEff * Math.max(0, sec.cakeMass - effectiveResidualCake);
                 sec.cakeMass -= removed;
                 O.pulseFlash[i] = true;
-                P.dustSpikeTicks = 10;
-                P.spikeTornCount = sec.tornCount;
+                pulsedThisTick = true;
+                pulsedTorn += sec.tornCount;
             }
             sec.regenTimer--;
             sec.dp = Qn > 100 ? sectionDP(sec.cakeMass, sec.tornCount) : 0;
             if (sec.regenTimer <= 0) sec.isRegen = false;
         } else if (Qn > 100) {
-            sec.cakeMass += (mps * 0.1 * C.simTimeFactor / 3600) / sectionArea;
+            sec.cakeMass += (mps * SIM_DT_H) / sectionArea;
             sec.dp = sectionDP(sec.cakeMass, sec.tornCount);
         } else {
             sec.dp = 0;
         }
     });
 
+    if (pulsedThisTick) {
+        P.spikeTornCount = P.dustSpikeTicks > 0 ? Math.max(P.spikeTornCount, pulsedTorn) : pulsedTorn;
+        P.dustSpikeTicks = 10;
+    }
+
     O.avgFilterDP = state.sections.reduce((a, s) => a + s.dp, 0) / C.numSections;
     O.totalDP = Qn > 100 ? (O.avgFilterDP + O.ductDP + O.reactorDP + O.pipesDP + O.outletDP) : 0;
 
     // ── 10. МОЩНОСТЬ НА ВАЛУ И ТОК ДВИГАТЕЛЯ ДЫМОСОСА ──
-    const Q_fan = (Qn * tfFan) / 3600;
+    // Дымосос прокачивает поток фильтра + конструктивные подсосы наружного воздуха после фильтра
+    const QfanN = Qn > 0 ? Qn / (1 - C.falseAirFrac) : 0;
+    O.stackFlow = QfanN;
+    const Q_fan = (QfanN * tfFan) / 3600;
     const fanStaticDP = Math.max(0, O.totalDP - stackDraftBonus);
-    const N_shaft = (Q_fan * fanStaticDP * 1000) / C.fanEfficiency;
+    // КПД по характеристике: максимум в BEP (Q/Q_max = fanBepRatio), падение при уходе от неё и при закрутке на НА
+    const rQ = Qmax > 1 ? Qn / Qmax : 0;
+    const dev = (rQ - C.fanBepRatio) / C.fanBepRatio;
+    const igvLoss = 1 - C.igvLossK * (1 - alpha) * (1 - alpha);
+    const fanEff = clamp(C.fanEfficiency * (1 - C.fanEffCurvature * dev * dev) * igvLoss, C.fanEffMin, C.fanEfficiency);
+    O.fanEff = fanEff;
+    const N_shaft = (Q_fan * fanStaticDP * 1000) / fanEff;
     O.fanPowerKW = N_shaft / C.motorEfficiency / 1000;
     O.fanAmps = (O.fanPowerKW * 1000) / (C.fanVoltage * 1000 * 1.732 * C.fanCosF);
     if (n <= 0 || Qn <= 100) {
@@ -494,10 +547,10 @@ export function tick() {
     // Кратность рециркуляции ускоряет массообмен и гомогенизацию F% в партии.
     const fCapturedKgH = hfGen * effTotal * (19 / 20);
     const outFlowKgH = I.freshFeed * 1000;
-    const dtH = (C.simTimeFactor * 0.1) / 3600;
+    const dtH = SIM_DT_H;
     if (I.freshFeed > 0.05 || I.recircFeed > 0.5) {
-        const mixingBoost = 0.75 + 0.25 * clamp(recircRatio / 4.0, 0, 1.4);
-        const dF = ((fCapturedKgH * mixingBoost - (P.fContentAccum / 100) * outFlowKgH) / (C.circulatingInventory * 1000)) * 100 * dtH;
+        // Строгий баланс: dF/dt = (F_улов − F%·Q_вывод) / M_инвентаря — стационарное F% = F_улов/Q_свеж при любой рециркуляции.
+        const dF = ((fCapturedKgH - (P.fContentAccum / 100) * outFlowKgH) / (C.circulatingInventory * 1000)) * 100 * dtH;
         P.fContentAccum = clamp(P.fContentAccum + dF, 0.05, C.maxFContent);
     }
     O.fContent = P.fContentAccum;
@@ -576,6 +629,14 @@ export function consumePeakMetrics() {
     P.peakDustOut = O.dustOut;
     P.peakHfOut = O.hfOut;
     return res;
+}
+
+// ── Очередь алармов ──
+/** Возвращает накопленные сообщения и очищает очередь (вызывается UI после каждого тика и действия). */
+export function drainAlarms() {
+    const out = state.alarms;
+    state.alarms = [];
+    return out;
 }
 
 // ── Управляющие функции (вызываются из UI) ──

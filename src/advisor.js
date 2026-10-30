@@ -1,15 +1,17 @@
 // ═══════════════════════════════════════════════════════════════════════
-//  ANTIGRAVITY СГОУ — ПРЕДИКТИВНАЯ АНАЛИТИКА (APM ADVISOR) И АВТОПИЛОТ (v8.0)
+//  ANTIGRAVITY СГОУ — ПРЕДИКТИВНАЯ АНАЛИТИКА (APM ADVISOR) И АВТОПИЛОТ (v8.1)
 //  Диагностика первопричин (Root Cause Analysis), замкнутый контур
 //  регулирования по реальным актуаторам и 6 обучающих сценариев.
 // ═══════════════════════════════════════════════════════════════════════
 
 import { config, IDEAL, clamp } from './config.js';
 
-// Параметры, которыми управляет автопилот (если не перехвачены оператором в state.hold)
+// Параметры, которыми управляет автопилот (если не перехвачены оператором в state.hold).
+// Температура и влажность газа от корпусов (gasTempSP, gasHumidity) — внешние возмущения процесса,
+// а не исполнительные механизмы ГОУ, поэтому автопилот их не трогает.
 const AUTOPILOT_PARAMS = [
     'guideVane', 'fanRPM', 'freshFeed', 'recircFeed',
-    'gasTempSP', 'gasHumidity', 'inletDraft', 'regenSP', 'dilutionValve'
+    'inletDraft', 'regenSP', 'dilutionValve'
 ];
 
 /**
@@ -37,17 +39,18 @@ export function autoTune(state, changedParam) {
         return;
     }
     state.hold = {};
+    // Возвращаются только органы управления. Возмущения (T и влажность газа, порванные рукава,
+    // наружная T) и отказавшее оборудование (питатель глинозёма) автопилот «не чинит».
     I.fanRPM        = IDEAL.fanRPM;
     I.guideVane     = IDEAL.guideVane;
-    I.gasTempSP     = IDEAL.gasTempSP;
-    I.gasHumidity   = IDEAL.gasHumidity;
     I.inletDraft    = IDEAL.inletDraft;
     I.dilutionValve = IDEAL.dilutionValve;
-    I.freshFeed     = IDEAL.freshFeed;
-    I.recircFeed    = IDEAL.recircFeed;
     I.regenSP       = IDEAL.regenSP;
+    if (state.advisor.activeScenario !== 'feeder_fault') {
+        I.freshFeed  = IDEAL.freshFeed;
+        I.recircFeed = IDEAL.recircFeed;
+    }
     I.pipes.forEach(p => { p.damper = IDEAL.pipesDamper; });
-    I.tornBags      = 0;
 }
 
 /**
@@ -75,8 +78,6 @@ export function autopilotStep(state) {
     const H = state.hold;
 
     if (!H.fanRPM)      I.fanRPM = IDEAL.fanRPM;
-    if (!H.gasTempSP)   I.gasTempSP = IDEAL.gasTempSP;
-    if (!H.gasHumidity) I.gasHumidity = IDEAL.gasHumidity;
     if (!H.inletDraft)  I.inletDraft = IDEAL.inletDraft;
 
     // 1. Клапан подсоса холодного воздуха: открывается при перегреве (>118°C, напр. анодный эффект)
@@ -100,11 +101,13 @@ export function autopilotStep(state) {
     // 3. Дозирование свежего и рециркулирующего глинозёма
     const load = Math.max(0.6, O.hfGenLoad || 1);
     const tornKick = 1 + I.tornBags * 0.025;
-    if (!H.freshFeed) {
+    // Отказ питателя — это отказ оборудования: автопилот не может дозировать глинозём, пока оператор не вмешался
+    const feederFailed = state.advisor.activeScenario === 'feeder_fault';
+    if (!H.freshFeed && !feederFailed) {
         const targetFresh = clamp(IDEAL.freshFeed * load * tornKick, 2.0, 10.0);
         I.freshFeed = parseFloat((I.freshFeed + (targetFresh - I.freshFeed) * 0.15).toFixed(1));
     }
-    if (!H.recircFeed) {
+    if (!H.recircFeed && !feederFailed) {
         const targetRecirc = clamp(I.freshFeed * 4.0, 6.0, 40.0);
         I.recircFeed = parseFloat((I.recircFeed + (targetRecirc - I.recircFeed) * 0.15).toFixed(1));
     }
@@ -119,7 +122,7 @@ export function autopilotStep(state) {
 }
 
 /**
- * Предиктивная диагностика и формирование карточек рекомендаций (APM v8.0)
+ * Предиктивная диагностика и формирование карточек рекомендаций (APM v8.1)
  */
 export function runPredictiveDiagnostics(state) {
     const I = state.inputs;
@@ -272,6 +275,7 @@ export function runPredictiveDiagnostics(state) {
                 apply: () => {
                     I.freshFeed = IDEAL.freshFeed;
                     I.recircFeed = IDEAL.recircFeed;
+                    if (adv.activeScenario === 'feeder_fault') adv.activeScenario = null;
                     P.cakeActivity = 0.96;
                     state.alarms.push(`✓ Советчик: подача глинозёма восстановлена (${IDEAL.freshFeed}/${IDEAL.recircFeed} т/ч)`);
                 }
@@ -343,6 +347,7 @@ export function runPredictiveDiagnostics(state) {
                 apply: () => {
                     I.freshFeed = neededFresh;
                     I.recircFeed = neededRecirc;
+                    if (adv.activeScenario === 'feeder_fault') adv.activeScenario = null;
                     state.alarms.push(`✓ Советчик: подача глинозёма увеличена до ${neededFresh}/${neededRecirc} т/ч`);
                 }
             };
@@ -503,7 +508,7 @@ export function runPredictiveDiagnostics(state) {
             module: 'fan',
             type: 'danger',
             title: `Токовая перегрузка двигателя дымососа (${Math.round(O.fanAmps)} А > ${config.fanMaxAmps} А)`,
-            reason: `Потребляемая мощность ${Math.round(O.fanPowerKW)} кВт выше номинала 1600 кВт. Угроза отключения дымососа релейной защитой.`,
+            reason: `Потребляемая мощность ${Math.round(O.fanPowerKW)} кВт выше номинала ${config.fanRatedKW} кВт. Угроза отключения дымососа релейной защитой.`,
             actionText: `Прикрыть НА до ${vaneForTarget}%`,
             effectText: 'Снижение тока в безопасную зону, защита высоковольтного двигателя 6 кВ',
             apply: () => {
@@ -587,7 +592,7 @@ export function triggerScenario(state, name) {
         state.alarms.push('🔥 СЦЕНАРИЙ: Анодный эффект в корпусе (+55°C, залповый выброс HF в 3.5×)!');
     } else if (name === 'winter_frost') {
         I.outdoorTemp = -32;
-        if (I.guideVane < 75) I.guideVane = 78;
+        if (I.guideVane < 75) I.guideVane = 75;
         adv.activeScenario = 'winter_frost';
         state.alarms.push('❄ СЦЕНАРИЙ: Сибирский мороз −32°C (рост плотности газа, самотяги трубы и тока дымососа)!');
     } else if (name === 'bag_wear') {
@@ -601,10 +606,10 @@ export function triggerScenario(state, name) {
         adv.activeScenario = 'feeder_fault';
         state.alarms.push('⛔ СЦЕНАРИЙ: Отказ питателя свежего глинозёма (истощение пирога и проскок HF > 5 мг/нм³)!');
     } else if (name === 'wet_blinding') {
-        I.gasHumidity = 18;
-        I.gasTempSP = 88;
+        I.gasHumidity = 20;
+        I.gasTempSP = 82;
         adv.activeScenario = 'wet_blinding';
-        state.alarms.push('💧 СЦЕНАРИЙ: Сырой глинозём и конденсация (точка росы ~86°C, цементация и залипание рукавов)!');
+        state.alarms.push('💧 СЦЕНАРИЙ: Сырой глинозём и переохлаждение газа (точка росы ~65°C, запас <10°C — конденсация, цементация и залипание рукавов)!');
     } else if (name === 'air_drop') {
         P.receiverPressure = 0.29;
         I.regenSP = 0.85;
