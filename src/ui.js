@@ -15,20 +15,55 @@ function clampInt(v, lo, hi) {
     return Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : 0));
 }
 
+// ── «Живая» строка под подсказкой: текущее значение параметра и величины, на которые он влияет ──
+// Карточка стоит под схемой, далеко от ползунков, поэтому показываем результат сразу в ней.
+const f0 = (v) => Number.isFinite(v) ? Math.round(v) : '—';
+const f1 = (v) => Number.isFinite(v) ? v.toFixed(1) : '—';
+const f2 = (v) => Number.isFinite(v) ? v.toFixed(2) : '—';
+const kn = (v) => Number.isFinite(v) ? Math.round(v / 1000) : '—';
+export const HINT_LIVE = {
+    fanRPM:        (I, O) => `<b>RPM ${f0(I.fanRPM)}%</b> → расход <b>${kn(O.normalFlow)}</b> тыс. нм³/ч · ток <b>${f0(O.fanAmps)} А</b> · мощность <b>${f0(O.fanPowerKW)} кВт</b>`,
+    guideVane:     (I, O) => `<b>НА ${f0(I.guideVane)}%</b> → расход <b>${kn(O.normalFlow)}</b> тыс. нм³/ч · v_f <b>${f2(O.filtVelocity * 100)} см/с</b> · τ <b>${f1(O.contactTime)} с</b> · HF на трубе <b>${f2(O.hfOut)}</b> мг/нм³ · ток <b>${f0(O.fanAmps)} А</b>`,
+    gasTempSP:     (I, O) => `<b>уставка ${f0(I.gasTempSP)}°C</b> → T реактора <b>${f0(O.actualTemp)}°C</b> · запас до росы <b>${f0(O.dewPointMargin)}°C</b> · улавливание HF <b>${f2(O.effHF)}%</b>`,
+    gasHumidity:   (I, O) => `<b>H ${f0(I.gasHumidity)}%</b> → T росы <b>${f0(O.dewPointTemp)}°C</b> · запас <b>${f0(O.dewPointMargin)}°C</b> · продувок <b>${f0(O.regenCyclesPerHour)} ц/ч</b>`,
+    inletDraft:    (I, O) => `<b>уставка ${f0(I.inletDraft)} Па</b> → факт <b>${f0(O.calcDraft)} Па</b> · захват <b>${f1(O.captureEff * 100)}%</b> · HF в корпус <b>${f1(O.hfFugitiveKgH)} кг/ч</b>`,
+    dilutionValve: (I, O) => `<b>клапан ${f0(I.dilutionValve)}%</b> → доля подсоса <b>${f0(O.dilutionFrac * 100)}%</b> · T реактора <b>${f0(O.actualTemp)}°C</b> · разрежение <b>${f0(O.calcDraft)} Па</b>`,
+    freshFeed:     (I, O) => `<b>свежий ${f1(I.freshFeed)} т/ч</b> → F во вторичном <b>${f2(O.fContent)} wt%</b> · η₁ <b>${f1(O.effReactor)}%</b> · HF на трубе <b>${f2(O.hfOut)}</b> мг/нм³`,
+    recircFeed:    (I, O) => `<b>рецирк ${f1(I.recircFeed)} т/ч</b> (${f1(I.freshFeed > 0.05 ? I.recircFeed / I.freshFeed : 0)}× от свежего) → активность пирога <b>${f0(O.cakeActivity * 100)}%</b> · η₂ <b>${f1(O.effCake)}%</b>`,
+    regenSP:       (I, O) => `<b>уставка ${f2(I.regenSP)} кПа</b> → ΔP фильтра <b>${f2(O.avgFilterDP)} кПа</b> · продувок <b>${f0(O.regenCyclesPerHour)} ц/ч</b> · η₂ <b>${f1(O.effCake)}%</b> · ресивер <b>${f2(O.receiverP)} МПа</b>`,
+    timeSpeed:     (I) => `<b>${f0(I.timeSpeed)}×</b> → 1 с реального времени = <b>${f0(I.timeSpeed)} мин</b> процесса`,
+    tornBags:      (I, O) => `<b>порвано ${f0(I.tornBags)} из ${config.totalBags}</b> → пыль на трубе <b>${f1(O.dustOut)}</b> мг/нм³ (пик ${f1(O.peakDustDisplay)}) · HF <b>${f2(O.hfOut)}</b> мг/нм³`,
+    pipesDamper:   (I, O) => `шиберы ${I.pipes.map(p => `${p.id} ${f0(p.damper)}%`).join(' · ')} → разрежение по ветвям <b>${O.pipeFlows.map(p => f0(p.draft)).join(' / ')} Па</b>`,
+    outdoorTemp:   (I, O) => `<b>${f0(I.outdoorTemp)}°C</b> → самотяга трубы <b>${f0(O.stackDraft * 1000)} Па</b> · T реактора <b>${f0(O.actualTemp)}°C</b> · расход <b>${kn(O.normalFlow)}</b> тыс. нм³/ч`,
+};
+
+let hintState = null;      // ссылка на state для «живой» строки (задаётся в initUI)
+let currentHintKey = null;
+
+function renderHintLive() {
+    const liveEl = document.getElementById('hint-live');
+    if (!liveEl) return;
+    const fn = HINT_LIVE[currentHintKey];
+    liveEl.innerHTML = (fn && hintState) ? `▶ Сейчас: ${fn(hintState.inputs, hintState.out)}` : '';
+}
+
 export function showPhysicsHint(paramKey) {
     const hint = PHYSICS_HINTS[paramKey];
     if (!hint) return;
+    currentHintKey = paramKey;
     const titleEl = document.getElementById('hint-title');
     const formEl = document.getElementById('hint-formula');
     const effEl = document.getElementById('hint-effect');
     if (titleEl) titleEl.textContent = `📘 Физика: ${hint.title}`;
     if (formEl) formEl.textContent = hint.formula;
     if (effEl) effEl.textContent = hint.effect;
+    renderHintLive();
 }
 
 // ── Инициализация контролов ──
 export function initUI(state, callbacks) {
     uiCallbacks = callbacks;
+    hintState = state;
 
     const bind = (iid, lid, key, suf, obj, parser = parseFloat) => {
         const el = document.getElementById(iid);
@@ -270,6 +305,7 @@ export function updateTelemetry(state, econ, peaks = null) {
     }
 
     updateAdvisorUI(state);
+    renderHintLive();
 
     if (state.idealMode) syncSlidersToState(state);
 }

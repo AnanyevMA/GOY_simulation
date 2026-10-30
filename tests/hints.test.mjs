@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { freshModel, readText, run } from './helpers.mjs';
 import { installFakeDom } from './fake-dom.mjs';
 import { PHYSICS_HINTS, config, dewPointC, captureEfficiency } from '../src/config.js';
-import { initUI, showPhysicsHint, syncSlidersToState } from '../src/ui.js';
+import { initUI, showPhysicsHint, syncSlidersToState, updateTelemetry, HINT_LIVE } from '../src/ui.js';
+import { getEconomics } from '../src/economics.js';
 
 const dom = installFakeDom();
 
@@ -106,4 +107,48 @@ test('числа в текстах подсказок соответствуют
     assert.ok(h.gasTempSP.effect.includes('187°C → 80%') && Math.abs(res[200].actualTemp - 187) < 3 && Math.abs(res[200].effHF - 80) < 4);
     // показатель степени мощности
     assert.ok(h.guideVane.formula.includes('Q^2.0…2.6'));
+});
+
+test('карточка подсказки стоит под схемой (в .stage сразу после canvas), а не в правой панели', () => {
+    const html = dom.html;
+    const iStage = html.indexOf('class="stage"');
+    const iCanvas = html.indexOf('<canvas id="cv">');
+    const iHint = html.indexOf('id="physics-hint-box"');
+    const iPanel = html.indexOf('<div class="panel">');
+    assert.ok(iStage > 0 && iCanvas > iStage, 'canvas внутри .stage');
+    assert.ok(iHint > iCanvas && iHint < iPanel, 'карточка после canvas и до правой панели');
+    assert.equal((html.match(/id="physics-hint-box"/g) || []).length, 1);
+    const stage = html.slice(iStage, iPanel);
+    for (const id of ['hint-title', 'hint-formula', 'hint-effect', 'hint-live']) assert.ok(stage.includes(`id="${id}"`), `#${id} внутри .stage`);
+    const panel = html.slice(iPanel);
+    for (const id of ['hint-title', 'hint-formula', 'hint-effect', 'hint-live']) assert.ok(!panel.includes(`id="${id}"`), `#${id} не должен оставаться в панели`);
+});
+
+test('«живая» строка: у каждого параметра с подсказкой есть строка текущих значений без NaN/undefined', async () => {
+    const m = await freshModel(); run(m, 400);
+    for (const key of Object.keys(PHYSICS_HINTS)) {
+        if (key === 'tornBags' || key === 'pipesDamper' || key === 'timeSpeed' || HINT_LIVE[key]) {
+            assert.equal(typeof HINT_LIVE[key], 'function', `нет HINT_LIVE для ${key}`);
+            const t = HINT_LIVE[key](m.state.inputs, m.state.out);
+            assert.ok(t.length > 10 && !/NaN|undefined|Infinity/.test(t), `${key}: ${t}`);
+        }
+    }
+    assert.deepEqual(Object.keys(HINT_LIVE).sort(), Object.keys(PHYSICS_HINTS).sort(), 'ключи HINT_LIVE и PHYSICS_HINTS совпадают');
+});
+
+test('наведение показывает «Сейчас: …», строка обновляется при движении ползунка и по таймеру телеметрии', async () => {
+    const m = await freshModel(); run(m, 300);
+    initUI(m.state, { onForcePulse() {}, onBagRupture() {}, onIdealToggle() {}, onScenario() {}, onApplyRec() {}, onParamChange() {} });
+    const live = dom.doc.getElementById('hint-live');
+    live.innerHTML = '';
+    dom.hintEls.find(e => e.getAttribute('data-hint') === 'guideVane').fire('mouseenter');
+    assert.ok(live.innerHTML.startsWith('▶ Сейчас:') && live.innerHTML.includes('НА 69%'), live.innerHTML);
+    dom.doc.getElementById('I-vane').fire('input', { target: { value: '90' } });
+    assert.ok(live.innerHTML.includes('НА 90%'));
+    // после пересчёта модели и 1 Гц-обновления телеметрии значения в строке меняются
+    const before = live.innerHTML;
+    run(m, 600);
+    updateTelemetry(m.state, getEconomics(m.state.out), null);
+    assert.notEqual(live.innerHTML, before, 'значения должны обновиться');
+    assert.ok(live.innerHTML.includes('НА 90%'));
 });

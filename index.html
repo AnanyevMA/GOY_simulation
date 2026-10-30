@@ -23,10 +23,16 @@
             background: #05070a; border-right: 2px solid #1b2028;
             padding: 8px; overflow: hidden;
         }
-        canvas {
-            width: 100%; height: auto;
+        /* Сцена: схема ГОУ с легендой + карточка «Физика процесса» непосредственно под ней.
+           Ширина подбирается так, чтобы схема (16:9) и карточка вместе помещались по высоте окна. */
+        .stage {
+            --hint-h: 150px; --gap: 8px;
+            width: min(100%, calc((100vh - 16px - var(--gap) - var(--hint-h)) * 16 / 9));
+            display: flex; flex-direction: column; gap: var(--gap);
+        }
+        .stage > canvas {
+            display: block; width: 100%; height: auto;
             aspect-ratio: 16 / 9;
-            max-height: 100%;
             border-radius: 4px;
         }
 
@@ -124,6 +130,15 @@
         .alarm-entry.alarm-warn { color: #f85149; }
         .alarm-count { color: #d29922; font-weight: bold; }
 
+        /* ── Узкие экраны: схема сверху, панель управления под ней ── */
+        @media (max-width: 900px) {
+            body { flex-direction: column; height: auto; min-height: 100vh; overflow: auto; }
+            .canvas-wrap { flex: none; border-right: none; border-bottom: 2px solid #1b2028; }
+            .stage { width: 100%; --hint-h: 190px; }
+            .hint-box { grid-template-columns: 1fr; grid-template-areas: "title" "formula" "effect" "live"; }
+            .panel { flex: none; max-width: none; min-width: 0; height: auto; overflow: visible; }
+        }
+
         /* ── Экономика ── */
         .econ-row { display: flex; justify-content: space-between; font-family: monospace; font-size: 10px; margin-bottom: 2px; }
         .econ-lbl { color: #6e7681; }
@@ -161,17 +176,29 @@
 
         /* ── Интерактивная карточка обучения («Физика процесса») ── */
         .hint-box {
+            height: var(--hint-h); overflow-y: auto;
             background: linear-gradient(135deg, #0d1520, #0d1117);
             border: 1px solid #1f3a5f; border-left: 3px solid #58a6ff;
-            border-radius: 5px; padding: 6px 8px; font-size: 9px;
+            border-radius: 5px; padding: 8px 14px; font-size: 12px;
+            display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+            grid-template-areas: "title title" "formula effect" "live live";
+            column-gap: 18px; row-gap: 6px; align-content: start;
         }
-        .hint-title { font-weight: 700; color: #79c0ff; margin-bottom: 2px; font-size: 9.5px; }
+        .hint-box::-webkit-scrollbar { width: 5px; }
+        .hint-box::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+        .hint-title { grid-area: title; font-weight: 700; color: #79c0ff; font-size: 13px; }
         .hint-formula {
-            font-family: 'Consolas', monospace; color: #fbbf24; font-size: 9px;
-            background: rgba(251,191,36,0.08); padding: 2px 5px; border-radius: 3px;
-            margin-bottom: 3px; display: inline-block;
+            grid-area: formula; align-self: start;
+            font-family: 'Consolas', monospace; color: #fbbf24; font-size: 12px; line-height: 1.4;
+            background: rgba(251,191,36,0.08); padding: 5px 8px; border-radius: 3px;
         }
-        .hint-effect { color: #8b949e; line-height: 1.25; }
+        .hint-effect { grid-area: effect; color: #a9b4c0; line-height: 1.4; }
+        .hint-live {
+            grid-area: live; font-family: 'Consolas', monospace; font-size: 11.5px; color: #7ee787;
+            border-top: 1px dashed #21262d; padding-top: 5px; min-height: 18px;
+        }
+        .hint-live:empty { display: none; }
+        .hint-live b { color: #c9d1d9; font-weight: 600; }
 
         /* ── Советчик APM ── */
         .advisor-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
@@ -224,7 +251,19 @@
 <body>
 
 <!-- ═══════ CANVAS ═══════ -->
-<div class="canvas-wrap"><canvas id="cv"></canvas></div>
+<div class="canvas-wrap">
+    <div class="stage">
+        <canvas id="cv"></canvas>
+
+        <!-- ─── СПРАВКА: ФИЗИКА ПРОЦЕССА — под легендой схемы ─── -->
+        <div class="hint-box" id="physics-hint-box" role="note">
+            <div class="hint-title" id="hint-title">📘 Физика процесса</div>
+            <div class="hint-formula" id="hint-formula">—</div>
+            <div class="hint-effect" id="hint-effect">Наведите курсор на любой ползунок, шибер или поле ввода (на сенсорном экране — коснитесь) — здесь появятся формула, физический смысл параметра и текущие значения связанных величин.</div>
+            <div class="hint-live" id="hint-live"></div>
+        </div>
+    </div>
+</div>
 
 <!-- ═══════ ПАНЕЛЬ УПРАВЛЕНИЯ ═══════ -->
 <div class="panel">
@@ -274,13 +313,6 @@
         <div class="recs-container" id="adv-recs-container">
             <div class="rec-empty">✓ Техпроцесс стабилен, все 3 контура в оптимуме</div>
         </div>
-    </div>
-
-    <!-- ─── СПРАВКА: ФИЗИКА ПРОЦЕССА (ДЛЯ ОБУЧЕНИЯ) ─── -->
-    <div class="hint-box" id="physics-hint-box">
-        <div class="hint-title" id="hint-title">📘 Физика процесса: Направляющий аппарат (НА)</div>
-        <div class="hint-formula" id="hint-formula">Q_max ∝ α,  P_max ∝ α^1.5,  N_эл ∝ Q^2.5</div>
-        <div class="hint-effect" id="hint-effect">Наведите курсор или измените любой ползунок, чтобы увидеть физическую формулу и цепочку взаимосвязей в реальном времени.</div>
     </div>
 
     <!-- ─── ТЕЛЕМЕТРИЯ ─── -->
